@@ -1,5 +1,5 @@
 import type { Attachment, Conversation, HomeInterfaceConfig, Message, Offer } from '@/lib/types';
-import { getFirebaseAuth, getFirebaseDb, getFirebaseStorage } from '@/lib/firebase/client';
+import { getFirebaseAuth, getFirebaseDb } from '@/lib/firebase/client';
 import {
   addDoc,
   collection,
@@ -20,7 +20,7 @@ import {
   type Unsubscribe
 } from 'firebase/firestore';
 import { GoogleAuthProvider, onAuthStateChanged, signInAnonymously, signInWithPopup, type User } from 'firebase/auth';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { uploadFiles as uploadThingFiles } from '@/utils/uploadthing';
 
 export const defaultHomeConfig: HomeInterfaceConfig = {
   eyebrow: 'Private commission portal',
@@ -393,6 +393,60 @@ export function kindFromFile(file: File, forcedKind?: Attachment['kind']): Attac
   return 'file';
 }
 
+
+
+function describeUploadThingError(error: unknown) {
+  if (!error || typeof error !== 'object') return 'Upload failed.';
+  const maybe = error as { message?: string; code?: string };
+  const message = maybe.message || maybe.code || '';
+
+  if (message.toLowerCase().includes('token') || message.toLowerCase().includes('uploadthing')) {
+    return 'Upload failed. UploadThing is not configured yet. Add UPLOADTHING_TOKEN in Vercel and redeploy.';
+  }
+
+  return message || 'Upload failed.';
+}
+
+async function uploadFileToUploadThing(file: File) {
+  const timeout = new Promise<never>((_, reject) => {
+    window.setTimeout(() => {
+      reject(new Error('Upload timed out. Check UploadThing token, Vercel environment variables, or file size/type limits.'));
+    }, 45000);
+  });
+
+  try {
+    const result = await Promise.race([
+      uploadThingFiles('conversationAttachment', { files: [file] }),
+      timeout
+    ]);
+
+    const first = Array.isArray(result) ? result[0] : null;
+    if (!first) throw new Error('Upload completed without a file response.');
+
+    const uploaded = first as {
+      name?: string;
+      size?: number;
+      key?: string;
+      url?: string;
+      appUrl?: string;
+      ufsUrl?: string;
+      serverData?: { url?: string; key?: string; name?: string; size?: number };
+    };
+
+    const url = uploaded.ufsUrl || uploaded.url || uploaded.appUrl || uploaded.serverData?.url;
+    if (!url) throw new Error('Upload completed but no public file URL was returned.');
+
+    return {
+      url,
+      key: uploaded.key || uploaded.serverData?.key || url,
+      name: uploaded.name || uploaded.serverData?.name || file.name,
+      size: uploaded.size || uploaded.serverData?.size || file.size
+    };
+  } catch (error) {
+    throw new Error(describeUploadThingError(error));
+  }
+}
+
 export async function uploadConversationFile(
   conversationId: string,
   sender: Message['sender'],
@@ -402,29 +456,20 @@ export async function uploadConversationFile(
 ) {
   await ensureAnonymousUser();
   const db = getFirebaseDb();
-  const storage = getFirebaseStorage();
   const fileName = overrideName || file.name || 'upload.bin';
-  const safeName = fileName.replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 120);
-  const path = `conversations/${conversationId}/${Date.now()}-${safeName}`;
-  const storageRef = ref(storage, path);
-
-  await uploadBytes(storageRef, file, {
-    contentType: file.type || 'application/octet-stream'
-  });
-
-  const url = await getDownloadURL(storageRef);
+  const uploaded = await uploadFileToUploadThing(file);
   const kind = kindFromFile(file, options?.kind);
   const attachment: Attachment = {
     id: crypto.randomUUID(),
     conversation_id: conversationId,
     uploaded_by: sender,
-    storage_path: path,
-    file_name: fileName,
+    storage_path: uploaded.key,
+    file_name: uploaded.name || fileName,
     mime_type: file.type || null,
-    size_bytes: file.size,
+    size_bytes: uploaded.size || file.size,
     kind,
     created_at: nowIso(),
-    signed_url: url,
+    signed_url: uploaded.url,
     parent_attachment_id: options?.parentAttachmentId || null
   };
 

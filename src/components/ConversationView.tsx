@@ -200,7 +200,7 @@ export function ConversationView({
     const nextFiles = Array.from(files).filter(isSupportedUpload);
 
     if (!nextFiles.length) {
-      setError('Unsupported file type. Please upload images, ZIP, STL, 3MF, OBJ, FBX or PDF files.');
+      setError('Unsupported file type. Upload images, ZIP, STL, 3MF, OBJ, FBX or PDF files.');
       return;
     }
 
@@ -284,7 +284,7 @@ export function ConversationView({
       await uploadConversationFile(conversationId, role, file, overrideName, options);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Upload failed.';
-      setError(`${message} If this mentions billing or Storage access, Firebase Storage may require Blaze billing; use Cloudflare R2/UploadThing for the storage layer instead.`);
+      setError(message);
     } finally {
       setUploading(false);
     }
