@@ -21,6 +21,7 @@ import {
 import type { Attachment, Message, PaidProject, ProjectFinalFile, ProjectStatus } from '@/lib/types';
 import {
   CheckCircle2,
+  ChevronDown,
   FileArchive,
   FolderPlus,
   Image as ImageIcon,
@@ -183,6 +184,72 @@ function statusLabel(status: ProjectStatus) {
   return 'Case closed';
 }
 
+function projectPaymentConfirmed(project: PaidProject) {
+  return project.active || project.status === 'active' || project.status === 'closed';
+}
+
+function ProjectStatusPill({ project }: { project: PaidProject }) {
+  const paid = projectPaymentConfirmed(project);
+  return (
+    <span
+      className={cx(
+        'shrink-0 rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em]',
+        paid ? 'border-kiaro-lime/35 bg-kiaro-lime/10 text-kiaro-lime' : 'border-white/10 bg-white/[0.025] text-kiaro-muted'
+      )}
+    >
+      {paid ? 'Payment confirmed' : 'Waiting payment'}
+    </span>
+  );
+}
+
+function CurrentProjectSummary({ project }: { project?: PaidProject }) {
+  if (!project) return null;
+
+  const paid = projectPaymentConfirmed(project);
+  const finalFiles = project.final_files || [];
+
+  return (
+    <div
+      className={cx(
+        'group relative overflow-hidden rounded-3xl border p-4 transition',
+        paid ? 'border-kiaro-lime/40 bg-kiaro-lime/[0.055]' : 'border-white/10 bg-white/[0.03] hover:border-white/20'
+      )}
+      title={paid ? 'Payment confirmed. Delivery access is active.' : 'Waiting for payment confirmation.'}
+    >
+      {!paid ? (
+        <div className="pointer-events-none absolute inset-x-4 top-3 z-10 translate-y-[-6px] rounded-full border border-white/10 bg-black/80 px-3 py-2 text-center text-[10px] font-bold uppercase tracking-[0.16em] text-kiaro-muted opacity-0 shadow-2xl backdrop-blur transition group-hover:translate-y-0 group-hover:opacity-100">
+          Waiting for payment confirmation
+        </div>
+      ) : null}
+
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-kiaro-muted">{paid ? 'Active project' : 'Current project'}</div>
+          <div className="mt-1 truncate font-display text-xl font-black text-kiaro-text">{project.title}</div>
+        </div>
+        <ProjectStatusPill project={project} />
+      </div>
+      <p className="mt-3 text-xs leading-5 text-kiaro-muted">
+        {paid ? 'Payment is confirmed. Final delivery access is active when files are uploaded.' : 'This project is created, but delivery access is locked until payment is confirmed.'}
+      </p>
+      {paid && finalFiles.length ? (
+        <div className="mt-4 space-y-2">
+          {finalFiles.slice(0, 3).map((file) => (
+            <a key={file.id} href={projectFileDownloadUrl(file)} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-xs transition hover:border-white/25">
+              <span className="flex min-w-0 items-center gap-2">
+                <FileArchive size={15} className="shrink-0 text-kiaro-muted" />
+                <span className="truncate">{file.file_name}</span>
+              </span>
+              <span className="shrink-0 font-bold text-kiaro-muted">Download</span>
+            </a>
+          ))}
+          {finalFiles.length > 3 ? <div className="text-center text-[11px] text-kiaro-muted">+{finalFiles.length - 3} more files inside project slots</div> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function PaidProjectCard({
   slot,
   project,
@@ -206,55 +273,49 @@ function PaidProjectCard({
 }) {
   if (!project) {
     return (
-      <div className="rounded-3xl border border-dashed border-white/10 bg-white/[0.02] p-4 text-kiaro-muted">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div className="text-[10px] font-bold uppercase tracking-[0.22em]">Project slot {slot}</div>
-          <Lock size={15} className="opacity-35" />
+      <div className="flex items-center justify-between gap-3 rounded-2xl border border-dashed border-white/10 bg-white/[0.018] p-3 text-kiaro-muted">
+        <div className="min-w-0">
+          <div className="text-[10px] font-bold uppercase tracking-[0.2em]">Slot {String(slot).padStart(2, '0')}</div>
+          <div className="mt-1 text-xs">Empty project slot</div>
         </div>
-        <div className="min-h-20 rounded-2xl border border-white/[0.06] bg-black/15" />
         {role === 'customer' ? (
-          <button type="button" onClick={onNewProject} className="btn-ghost mt-3 flex w-full items-center justify-center gap-2 px-4 py-3 text-xs font-bold">
-            <FolderPlus size={15} /> New project
+          <button type="button" onClick={onNewProject} className="btn-ghost shrink-0 px-3 py-2 text-[11px] font-bold">
+            New project
           </button>
-        ) : null}
+        ) : (
+          <Lock size={15} className="shrink-0 opacity-35" />
+        )}
       </div>
     );
   }
 
-  const canSeeDeliverables = role === 'admin' || project.active || project.status === 'closed';
+  const paid = projectPaymentConfirmed(project);
+  const canSeeDeliverables = role === 'admin' || paid;
   const finalFiles = project.final_files || [];
 
   return (
-    <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-4 kiaro-hover">
+    <div
+      className={cx(
+        'rounded-2xl border p-3 transition',
+        paid ? 'border-kiaro-lime/30 bg-kiaro-lime/[0.04]' : 'border-white/10 bg-white/[0.025] hover:border-white/20'
+      )}
+      title={paid ? 'Payment confirmed.' : 'Waiting for payment confirmation.'}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-kiaro-muted">Project {slot}</div>
-          <div className="mt-1 truncate font-display text-lg font-black">{project.title}</div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-kiaro-muted">Slot {String(slot).padStart(2, '0')}</div>
+          <div className="mt-1 truncate font-display text-base font-black">{project.title}</div>
         </div>
-        <span className={cx('shrink-0 rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em]', project.active || project.status === 'closed' ? 'border-kiaro-lime/25 text-kiaro-lime' : 'border-white/10 text-kiaro-muted')}>
-          {statusLabel(project.status)}
-        </span>
+        <ProjectStatusPill project={project} />
       </div>
 
-      {role === 'customer' ? (
-        <p className="mt-3 text-xs leading-5 text-kiaro-muted">
-          {project.active
-            ? 'Delivery access is active. Download final files below.'
-            : project.status === 'closed'
-              ? 'This case is closed. Final files remain available if delivery was activated.'
-              : 'Kiaro Studio will send a payment link after the scope is clear. Delivery activates after payment is manually confirmed.'}
-        </p>
-      ) : (
-        <p className="mt-3 text-xs leading-5 text-kiaro-muted">Activate this project after payment is confirmed, upload final STL/ZIP files, then close the case when delivery is complete.</p>
-      )}
-
       {canSeeDeliverables ? (
-        <div className="mt-4 space-y-2">
+        <div className="mt-3 space-y-2">
           {finalFiles.length ? (
             finalFiles.map((file) => (
-              <div key={file.id} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-xs">
+              <div key={file.id} className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/20 p-2 text-xs">
                 <a href={projectFileDownloadUrl(file)} className="flex min-w-0 flex-1 items-center gap-2">
-                  <FileArchive size={15} className="shrink-0 text-kiaro-muted" />
+                  <FileArchive size={14} className="shrink-0 text-kiaro-muted" />
                   <span className="truncate">{file.file_name}</span>
                 </a>
                 <div className="flex shrink-0 items-center gap-2">
@@ -268,22 +329,120 @@ function PaidProjectCard({
               </div>
             ))
           ) : (
-            <div className="rounded-2xl border border-dashed border-white/10 bg-black/15 p-4 text-center text-xs text-kiaro-muted">No final files uploaded yet.</div>
+            <div className="rounded-xl border border-dashed border-white/10 bg-black/15 p-3 text-center text-xs text-kiaro-muted">No final files uploaded yet.</div>
           )}
         </div>
       ) : null}
 
       {role === 'admin' ? (
-        <div className="mt-4 grid gap-2">
-          <button type="button" disabled={working} onClick={() => onActivate(project)} className="btn-ghost flex items-center justify-center gap-2 px-4 py-3 text-xs font-bold">
-            <CheckCircle2 size={15} /> Activate paid project
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <button type="button" disabled={working} onClick={() => onActivate(project)} className="btn-ghost flex items-center justify-center gap-2 px-3 py-2 text-[11px] font-bold">
+            <CheckCircle2 size={14} /> Confirm paid
           </button>
-          <button type="button" disabled={working} onClick={() => onUploadFinal(project)} className="btn-ghost flex items-center justify-center gap-2 px-4 py-3 text-xs font-bold">
-            <UploadCloud size={15} /> Upload final files
+          <button type="button" disabled={working} onClick={() => onUploadFinal(project)} className="btn-ghost flex items-center justify-center gap-2 px-3 py-2 text-[11px] font-bold">
+            <UploadCloud size={14} /> Final files
           </button>
-          <button type="button" disabled={working} onClick={() => onClose(project)} className="btn-ghost flex items-center justify-center gap-2 border-red-300/20 px-4 py-3 text-xs font-bold text-red-100 hover:border-red-300/45">
-            <XCircle size={15} /> Close case
+          <button type="button" disabled={working} onClick={() => onClose(project)} className="btn-ghost flex items-center justify-center gap-2 border-red-300/20 px-3 py-2 text-[11px] font-bold text-red-100 hover:border-red-300/45">
+            <XCircle size={14} /> Close
           </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function PaidProjectsPanel({
+  role,
+  projects,
+  projectsBySlot,
+  expanded,
+  setExpanded,
+  onNewProject,
+  onActivate,
+  onClose,
+  onUploadFinal,
+  onDeleteFinal,
+  workingId
+}: {
+  role: 'customer' | 'admin';
+  projects: PaidProject[];
+  projectsBySlot: Record<number, PaidProject>;
+  expanded: boolean;
+  setExpanded: (expanded: boolean) => void;
+  onNewProject: () => void;
+  onActivate: (project: PaidProject) => void;
+  onClose: (project: PaidProject) => void;
+  onUploadFinal: (project: PaidProject) => void;
+  onDeleteFinal: (project: PaidProject, file: ProjectFinalFile) => void;
+  workingId?: string | null;
+}) {
+  const sortedProjects = [...projects].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+  const currentProject =
+    sortedProjects.find((project) => projectPaymentConfirmed(project) && project.status !== 'closed') ||
+    sortedProjects.find((project) => project.status !== 'closed') ||
+    sortedProjects[0];
+
+  return (
+    <div className="kiaro-card p-5">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="font-display text-xl font-black">Paid projects</h2>
+          <p className="mt-1 text-xs leading-5 text-kiaro-muted">Payment confirmation and final delivery files.</p>
+        </div>
+        {role === 'customer' ? (
+          <button type="button" onClick={onNewProject} className="btn-ghost grid h-9 w-9 place-items-center" title="New project">
+            <Plus size={16} />
+          </button>
+        ) : null}
+      </div>
+
+      <div className="mt-4">
+        {currentProject ? (
+          <CurrentProjectSummary project={currentProject} />
+        ) : role === 'customer' ? (
+          <button type="button" onClick={onNewProject} className="w-full rounded-3xl border border-dashed border-white/10 bg-white/[0.02] p-5 text-left transition hover:border-white/25">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="font-display text-lg font-black">Start a paid project</div>
+                <p className="mt-1 text-xs leading-5 text-kiaro-muted">Create a named project first. Kiaro Studio will send a payment link after the scope is clear.</p>
+              </div>
+              <FolderPlus size={18} className="text-kiaro-muted" />
+            </div>
+          </button>
+        ) : (
+          <div className="rounded-3xl border border-dashed border-white/10 bg-white/[0.02] p-5 text-sm text-kiaro-muted">No project has been requested yet.</div>
+        )}
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="btn-ghost mt-4 flex w-full items-center justify-between px-4 py-3 text-xs font-bold"
+      >
+        <span>{expanded ? 'Hide project slots' : 'Manage project slots'}</span>
+        <ChevronDown size={16} className={cx('transition', expanded && 'rotate-180')} />
+      </button>
+
+      {expanded ? (
+        <div className="mt-3 grid gap-2">
+          {Array.from({ length: PAID_PROJECT_SLOT_COUNT }, (_, index) => {
+            const slot = index + 1;
+            const project = projectsBySlot[slot];
+            return (
+              <PaidProjectCard
+                key={slot}
+                slot={slot}
+                project={project}
+                role={role}
+                onNewProject={onNewProject}
+                onActivate={onActivate}
+                onClose={onClose}
+                onUploadFinal={onUploadFinal}
+                onDeleteFinal={onDeleteFinal}
+                working={Boolean(workingId && project?.id === workingId)}
+              />
+            );
+          })}
         </div>
       ) : null}
     </div>
@@ -380,6 +539,7 @@ export function ConversationView({
   const [offerScope, setOfferScope] = useState('Custom design/support work agreed in Kiaro Studio chat.');
   const [offerUrl, setOfferUrl] = useState('');
   const [projectModalOpen, setProjectModalOpen] = useState(false);
+  const [projectsExpanded, setProjectsExpanded] = useState(false);
   const [projectTitle, setProjectTitle] = useState('');
   const [creatingProject, setCreatingProject] = useState(false);
   const [finalUploadProject, setFinalUploadProject] = useState<PaidProject | null>(null);
@@ -868,37 +1028,6 @@ export function ConversationView({
           </div>
         </div>
 
-        <div className="kiaro-card p-5">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div>
-              <h2 className="font-display text-xl font-black">Paid projects</h2>
-              <p className="mt-1 text-xs leading-5 text-kiaro-muted">Deposit, final payment, delivery files and case status.</p>
-            </div>
-            <button type="button" onClick={() => setProjectModalOpen(true)} className="btn-ghost grid h-9 w-9 place-items-center" title="New project">
-              <Plus size={16} />
-            </button>
-          </div>
-          <div className="grid gap-3">
-            {Array.from({ length: PAID_PROJECT_SLOT_COUNT }, (_, index) => {
-              const slot = index + 1;
-              return (
-                <PaidProjectCard
-                  key={slot}
-                  slot={slot}
-                  project={projectsBySlot[slot]}
-                  role={role}
-                  onNewProject={() => setProjectModalOpen(true)}
-                  onActivate={activateProject}
-                  onClose={closeProject}
-                  onUploadFinal={openFinalUpload}
-                  onDeleteFinal={deleteFinalFile}
-                  working={Boolean(projectWorkingId && projectsBySlot[slot]?.id === projectWorkingId)}
-                />
-              );
-            })}
-          </div>
-        </div>
-
         {role === 'admin' ? (
           <div className="kiaro-card p-5">
             <h2 className="font-display text-xl font-black">Send payment link</h2>
@@ -911,6 +1040,21 @@ export function ConversationView({
             </div>
           </div>
         ) : null}
+
+        <PaidProjectsPanel
+          role={role}
+          projects={projects}
+          projectsBySlot={projectsBySlot}
+          expanded={projectsExpanded}
+          setExpanded={setProjectsExpanded}
+          onNewProject={() => setProjectModalOpen(true)}
+          onActivate={activateProject}
+          onClose={closeProject}
+          onUploadFinal={openFinalUpload}
+          onDeleteFinal={deleteFinalFile}
+          workingId={projectWorkingId}
+        />
+
       </aside>
 
       <input
