@@ -96,3 +96,8 @@ npm run build
 ```
 
 Vercel will install the dependencies and deploy automatically after GitHub push.
+
+
+## v12 message label polish
+- Customer-facing chat no longer displays raw sender labels like CUSTOMER.
+- Own messages show as You, admin messages show as Kiaro Studio, and system messages show as Update.

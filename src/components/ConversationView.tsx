@@ -139,6 +139,22 @@ function ImageLibraryCard({
   );
 }
 
+function getMessageDisplayName(sender: Message['sender'], viewerRole: 'customer' | 'admin') {
+  if (sender === 'system') return 'Update';
+  if (sender === viewerRole) return 'You';
+  if (sender === 'admin') return 'Kiaro Studio';
+  return 'Client';
+}
+
+function formatMessageTime(value: string) {
+  return new Date(value).toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
 export function ConversationView({
   conversationId,
   role,
@@ -372,7 +388,7 @@ export function ConversationView({
     await uploadFile(file, file.name, {
       parentAttachmentId: source?.id || null,
       kind: 'annotation',
-      messageBody: role === 'admin' ? 'Kiaro Studio added a marked-up image.' : 'Customer added a marked-up image.'
+      messageBody: role === 'admin' ? 'Marked-up image added by Kiaro Studio.' : 'Marked-up image added.'
     });
 
     if (source) {
@@ -447,8 +463,10 @@ export function ConversationView({
               return (
                 <div key={message.id} className={cx('flex', mine ? 'justify-end' : 'justify-start')}>
                   <div className={cx('max-w-[82%] rounded-3xl border p-4', mine ? 'border-kiaro-neon/25 bg-kiaro-neon/10' : 'border-white/10 bg-white/[0.045]')}>
-                    <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.24em] text-kiaro-muted">
-                      {message.sender} · {new Date(message.created_at).toLocaleString()}
+                    <div className="mb-2 flex items-center gap-2 text-[11px] font-medium tracking-[0.03em] text-kiaro-muted/85">
+                      <span>{getMessageDisplayName(message.sender, role)}</span>
+                      <span className="h-1 w-1 rounded-full bg-white/25" />
+                      <span>{formatMessageTime(message.created_at)}</span>
                     </div>
                     {message.type === 'offer' && message.offers ? (
                       <OfferCard offer={message.offers} admin={role === 'admin'} onPaid={() => markPaid(message.offers!.id)} />
@@ -578,7 +596,7 @@ export function ConversationView({
             uploadFile(file, file.name, {
               parentAttachmentId: variationParent.id,
               kind: 'image',
-              messageBody: role === 'admin' ? 'Kiaro Studio added an image variation.' : 'Customer added an image variation.'
+              messageBody: role === 'admin' ? 'Image variation added by Kiaro Studio.' : 'Image variation added.'
             });
           }
           setVariationParent(null);
