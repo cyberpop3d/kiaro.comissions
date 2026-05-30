@@ -55,7 +55,7 @@ export default function HomePage() {
 
   return (
     <main className="min-h-screen pb-16">
-      <TopNav right={<a href="/admin" className="btn-ghost px-5 py-3 text-sm font-bold">Admin</a>} />
+      <TopNav />
 
       <section className="mx-auto grid max-w-7xl gap-8 px-5 pt-8 lg:grid-cols-[1.05fr_.95fr] lg:pt-14">
         <div className="space-y-7">
