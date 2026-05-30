@@ -19,6 +19,7 @@ import {
   verifyAccess
 } from '@/lib/firebase/data';
 import type { Attachment, Conversation, Message, PaidProject, ProjectFinalFile, ProjectStatus } from '@/lib/types';
+import { normalizePaymentUrl } from '@/utils/links';
 import {
   CheckCircle2,
   ChevronDown,
@@ -680,10 +681,14 @@ export function ConversationView({
   async function sendOffer() {
     if (role !== 'admin') return;
     const amount = Number(offerAmount);
-    if (!amount || !offerUrl.trim()) return;
+    const normalizedPaymentUrl = normalizePaymentUrl(offerUrl);
+    if (!amount || !normalizedPaymentUrl) {
+      setError('Enter a valid amount and payment link. Example: https://patreon.com/cw/cyberpop');
+      return;
+    }
     setError('');
     try {
-      await sendOfferMessage(conversationId, { amount, currency: 'USD', scope: offerScope, paymentUrl: offerUrl.trim() });
+      await sendOfferMessage(conversationId, { amount, currency: 'USD', scope: offerScope, paymentUrl: normalizedPaymentUrl });
       if (currentProject) await updatePaidProjectStatus(conversationId, currentProject.id, 'offer_sent');
       setOfferUrl('');
     } catch (err) {
