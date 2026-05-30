@@ -565,6 +565,69 @@ export async function saveAnnotationRecord(conversationId: string, input: { sour
   });
 }
 
+
+export async function deleteAttachmentPermanently(
+  conversationId: string,
+  attachment: Attachment,
+  adminSecret: string,
+  includeBranches = true
+) {
+  await ensureAnonymousUser();
+  if (!adminSecret) throw new Error('Admin secret is required to permanently delete files.');
+
+  const db = getFirebaseDb();
+  const messagesRef = collection(db, 'conversations', conversationId, 'messages');
+  const targetQuery = query(messagesRef, where('attachment.id', '==', attachment.id));
+  const snapshots = [await getDocs(targetQuery)];
+
+  if (includeBranches) {
+    const branchQuery = query(messagesRef, where('attachment.parent_attachment_id', '==', attachment.id));
+    snapshots.push(await getDocs(branchQuery));
+  }
+
+  const docsById = new Map<string, QueryDocumentSnapshot<DocumentData>>();
+  snapshots.forEach((snapshot) => {
+    snapshot.docs.forEach((docSnap) => docsById.set(docSnap.id, docSnap));
+  });
+
+  if (!docsById.size) throw new Error('Attachment record was not found.');
+
+  const storageKeys = Array.from(docsById.values())
+    .map((docSnap) => docSnap.data().attachment?.storage_path)
+    .filter((key): key is string => typeof key === 'string' && key.trim().length > 0)
+    .map((key) => key.trim());
+
+  if (storageKeys.length) {
+    const res = await fetch('/api/admin/delete-upload', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-secret': adminSecret
+      },
+      body: JSON.stringify({ keys: storageKeys })
+    });
+
+    if (!res.ok) {
+      let message = 'UploadThing file deletion failed.';
+      try {
+        const payload = (await res.json()) as { error?: string };
+        message = payload.error || message;
+      } catch {
+        // Keep fallback message.
+      }
+      throw new Error(message);
+    }
+  }
+
+  await Promise.all(
+    Array.from(docsById.keys()).map((messageId) => deleteDoc(doc(db, 'conversations', conversationId, 'messages', messageId)))
+  );
+
+  await updateDoc(doc(db, 'conversations', conversationId), {
+    updated_at: serverTimestamp()
+  });
+}
+
 export async function deleteConversation(conversationId: string) {
   const db = getFirebaseDb();
   await deleteDoc(doc(db, 'conversations', conversationId));

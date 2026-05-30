@@ -2,9 +2,9 @@
 
 import { AnnotationModal } from '@/components/AnnotationModal';
 import { OfferCard } from '@/components/OfferCard';
-import { markOfferPaid, saveAnnotationRecord, sendOfferMessage, sendTextMessage, subscribeToMessages, uploadConversationFile, verifyAccess } from '@/lib/firebase/data';
+import { deleteAttachmentPermanently, markOfferPaid, saveAnnotationRecord, sendOfferMessage, sendTextMessage, subscribeToMessages, uploadConversationFile, verifyAccess } from '@/lib/firebase/data';
 import type { Attachment, Message } from '@/lib/types';
-import { FileArchive, Image as ImageIcon, Images, Paperclip, Plus, Send, UploadCloud, Wand2, type LucideIcon } from 'lucide-react';
+import { FileArchive, Image as ImageIcon, Images, Paperclip, Plus, Send, Trash2, UploadCloud, Wand2, type LucideIcon } from 'lucide-react';
 import { type DragEvent, useEffect, useMemo, useRef, useState } from 'react';
 
 function cx(...parts: Array<string | false | null | undefined>) {
@@ -56,12 +56,14 @@ function ImageLibraryCard({
   attachment,
   variants,
   onAnnotate,
-  onAddVariation
+  onAddVariation,
+  onDelete
 }: {
   attachment: Attachment;
   variants: Attachment[];
   onAnnotate: (attachment: Attachment) => void;
   onAddVariation: (attachment: Attachment) => void;
+  onDelete?: (attachment: Attachment, includeBranches?: boolean) => void;
 }) {
   const previewVariants = variants.slice(0, 4);
 
@@ -90,14 +92,36 @@ function ImageLibraryCard({
         <button type="button" onClick={() => onAddVariation(attachment)} title="Add variation to this image" className="btn-ghost grid h-9 w-10 place-items-center">
           <Plus size={16} />
         </button>
+        {onDelete ? (
+          <button
+            type="button"
+            onClick={() => onDelete(attachment, true)}
+            title="Permanently delete this image and its branches"
+            className="btn-ghost grid h-9 w-10 place-items-center border-red-400/20 text-red-200 hover:border-red-300/45 hover:text-red-50"
+          >
+            <Trash2 size={15} />
+          </button>
+        ) : null}
       </div>
       {variants.length ? (
         <div className="mt-3 grid grid-cols-3 gap-2">
           {variants.map((variant) => (
-            <button key={variant.id} type="button" onClick={() => onAnnotate(variant)} className="overflow-hidden rounded-xl border border-white/10 bg-black/25 transition hover:border-white/30 hover:opacity-100">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={variant.signed_url || ''} alt={variant.file_name} className="h-16 w-full object-cover opacity-80" />
-            </button>
+            <div key={variant.id} className="group relative overflow-hidden rounded-xl border border-white/10 bg-black/25 transition hover:border-white/30">
+              <button type="button" onClick={() => onAnnotate(variant)} className="block w-full">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={variant.signed_url || ''} alt={variant.file_name} className="h-16 w-full object-cover opacity-80" />
+              </button>
+              {onDelete ? (
+                <button
+                  type="button"
+                  onClick={() => onDelete(variant, false)}
+                  title="Permanently delete this branch"
+                  className="absolute right-1.5 top-1.5 grid h-7 w-7 place-items-center rounded-full border border-red-300/25 bg-black/70 text-red-100 opacity-0 transition group-hover:opacity-100"
+                >
+                  <Trash2 size={13} />
+                </button>
+              ) : null}
+            </div>
           ))}
         </div>
       ) : null}
@@ -123,6 +147,7 @@ export function ConversationView({
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [accessOk, setAccessOk] = useState(role === 'admin');
   const [annotating, setAnnotating] = useState<Attachment | null>(null);
@@ -311,6 +336,23 @@ export function ConversationView({
       setError(err instanceof Error ? err.message : 'Mark paid failed.');
     }
   }
+  async function deleteAttachment(attachment: Attachment, includeBranches = true) {
+    if (role !== 'admin') return;
+    const branchText = includeBranches ? ' This will also delete its branches/variations.' : '';
+    const confirmed = window.confirm(`Permanently delete ${attachment.file_name}?${branchText} This removes the UploadThing file and the chat record.`);
+    if (!confirmed) return;
+
+    setDeletingId(attachment.id);
+    setError('');
+    try {
+      await deleteAttachmentPermanently(conversationId, attachment, adminSecret || '', includeBranches);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Permanent delete failed.');
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
 
   async function saveAnnotation(dataUrl: string, strokes: unknown[]) {
     const source = annotating;
@@ -444,7 +486,7 @@ export function ConversationView({
               <Send size={18} />
             </button>
           </div>
-          <div className="mt-2 text-xs text-kiaro-muted">{uploading ? 'Uploading file…' : 'Supports images, ZIP, STL, 3MF and PDF files.'}</div>
+          <div className="mt-2 text-xs text-kiaro-muted">{deletingId ? 'Permanently deleting file…' : uploading ? 'Uploading file…' : 'Supports images, ZIP, STL, 3MF and PDF files.'}</div>
         </div>
       </section>
 
@@ -460,6 +502,7 @@ export function ConversationView({
                   variants={imageVariantsByParent[attachment.id] || []}
                   onAnnotate={setAnnotating}
                   onAddVariation={addVariation}
+                  onDelete={role === 'admin' ? deleteAttachment : undefined}
                 />
               ))
             ) : (
@@ -473,10 +516,26 @@ export function ConversationView({
           <div className="mt-4 grid gap-3">
             {fileAttachments.length ? (
               fileAttachments.map((attachment) => (
-                <a key={attachment.id} href={attachment.signed_url || '#'} target="_blank" rel="noreferrer" className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.035] p-4 text-sm kiaro-hover">
-                  <span className="flex min-w-0 items-center gap-3"><FileArchive size={18} className="text-kiaro-neon" /> <span className="truncate">{attachment.file_name}</span></span>
-                  <span className="text-xs text-kiaro-muted">Download</span>
-                </a>
+                <div key={attachment.id} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.035] p-4 text-sm kiaro-hover">
+                  <a href={attachment.signed_url || '#'} target="_blank" rel="noreferrer" className="flex min-w-0 flex-1 items-center gap-3">
+                    <FileArchive size={18} className="shrink-0 text-kiaro-neon" />
+                    <span className="truncate">{attachment.file_name}</span>
+                  </a>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <a href={attachment.signed_url || '#'} target="_blank" rel="noreferrer" className="text-xs text-kiaro-muted hover:text-kiaro-text">Download</a>
+                    {role === 'admin' ? (
+                      <button
+                        type="button"
+                        onClick={() => deleteAttachment(attachment, false)}
+                        disabled={deletingId === attachment.id}
+                        title="Permanently delete this file"
+                        className="grid h-8 w-8 place-items-center rounded-full border border-red-300/20 text-red-100 transition hover:border-red-300/45 disabled:opacity-40"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
               ))
             ) : (
               <EmptyLibraryCard icon={FileArchive} label="No files yet" />
