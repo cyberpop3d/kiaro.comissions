@@ -2,24 +2,13 @@
 
 import { AnnotationModal } from '@/components/AnnotationModal';
 import { OfferCard } from '@/components/OfferCard';
+import { markOfferPaid, saveAnnotationRecord, sendOfferMessage, sendTextMessage, subscribeToMessages, uploadConversationFile, verifyAccess } from '@/lib/firebase/data';
 import type { Attachment, Message } from '@/lib/types';
 import { Image as ImageIcon, Paperclip, Send, UploadCloud } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(' ');
-}
-
-function getAccessHeaders(
-  role: 'customer' | 'admin',
-  accessKey?: string | null,
-  adminSecret?: string | null
-): Record<string, string> {
-  if (role === 'admin') {
-    return { 'x-admin-secret': adminSecret ?? '' };
-  }
-
-  return { 'x-access-key': accessKey ?? '' };
 }
 
 function AttachmentPreview({
@@ -70,30 +59,52 @@ export function ConversationView({
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+  const [accessOk, setAccessOk] = useState(role === 'admin');
   const [annotating, setAnnotating] = useState<Attachment | null>(null);
   const [offerAmount, setOfferAmount] = useState('35');
   const [offerScope, setOfferScope] = useState('Custom design/support work agreed in Kiaro Studio chat.');
   const [offerUrl, setOfferUrl] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
-  const headers = getAccessHeaders(role, accessKey, adminSecret);
-
-  const loadMessages = useCallback(async () => {
-    const res = await fetch(`/api/conversations/${conversationId}/messages`, { headers });
-    if (!res.ok) {
-      setLoading(false);
-      return;
+  useEffect(() => {
+    let cancelled = false;
+    async function checkAccess() {
+      if (role === 'admin') {
+        setAccessOk(Boolean(adminSecret));
+        return;
+      }
+      if (!accessKey) {
+        setAccessOk(false);
+        return;
+      }
+      try {
+        const ok = await verifyAccess(conversationId, accessKey);
+        if (!cancelled) setAccessOk(ok);
+      } catch {
+        if (!cancelled) setAccessOk(false);
+      }
     }
-    const json = await res.json();
-    setMessages(json.messages || []);
-    setLoading(false);
-  }, [conversationId, role, accessKey, adminSecret]);
+    checkAccess();
+    return () => {
+      cancelled = true;
+    };
+  }, [role, accessKey, adminSecret, conversationId]);
 
   useEffect(() => {
-    loadMessages();
-    const timer = setInterval(loadMessages, 3500);
-    return () => clearInterval(timer);
-  }, [loadMessages]);
+    if (!accessOk) {
+      setLoading(false);
+      return undefined;
+    }
+
+    setLoading(true);
+    const unsubscribe = subscribeToMessages(conversationId, (nextMessages) => {
+      setMessages(nextMessages);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [accessOk, conversationId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -102,15 +113,12 @@ export function ConversationView({
   async function sendMessage() {
     if (!body.trim()) return;
     setSending(true);
+    setError('');
     try {
-      const res = await fetch(`/api/conversations/${conversationId}/messages`, {
-        method: 'POST',
-        headers: { ...headers, 'content-type': 'application/json' },
-        body: JSON.stringify({ body: body.trim(), sender: role })
-      });
-      if (!res.ok) throw new Error('Message failed');
+      await sendTextMessage(conversationId, role, body);
       setBody('');
-      await loadMessages();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Message failed.');
     } finally {
       setSending(false);
     }
@@ -118,20 +126,12 @@ export function ConversationView({
 
   async function uploadFile(file: File, overrideName?: string) {
     setUploading(true);
+    setError('');
     try {
-      const form = new FormData();
-      form.append('file', file, overrideName || file.name);
-      form.append('sender', role);
-      const res = await fetch(`/api/conversations/${conversationId}/attachments`, {
-        method: 'POST',
-        headers,
-        body: form
-      });
-      if (!res.ok) {
-        const json = await res.json().catch(() => null);
-        throw new Error(json?.error || 'Upload failed');
-      }
-      await loadMessages();
+      await uploadConversationFile(conversationId, role, file, overrideName);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Upload failed.';
+      setError(`${message} If this mentions billing or Storage access, Firebase Storage may require Blaze billing; use Cloudflare R2/UploadThing for the storage layer instead.`);
     } finally {
       setUploading(false);
     }
@@ -141,40 +141,46 @@ export function ConversationView({
     if (role !== 'admin') return;
     const amount = Number(offerAmount);
     if (!amount || !offerUrl.trim()) return;
-    const res = await fetch(`/api/conversations/${conversationId}/offers`, {
-      method: 'POST',
-      headers: { ...headers, 'content-type': 'application/json' },
-      body: JSON.stringify({ amount, currency: 'USD', scope: offerScope, paymentUrl: offerUrl.trim() })
-    });
-    if (!res.ok) throw new Error('Offer failed');
-    setOfferUrl('');
-    await loadMessages();
+    setError('');
+    try {
+      await sendOfferMessage(conversationId, { amount, currency: 'USD', scope: offerScope, paymentUrl: offerUrl.trim() });
+      setOfferUrl('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Offer failed.');
+    }
   }
 
   async function markPaid(offerId: string) {
-    const res = await fetch(`/api/admin/offers`, {
-      method: 'PATCH',
-      headers: { ...headers, 'content-type': 'application/json' },
-      body: JSON.stringify({ offerId, status: 'paid' })
-    });
-    if (!res.ok) throw new Error('Mark paid failed');
-    await loadMessages();
+    setError('');
+    try {
+      await markOfferPaid(conversationId, offerId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Mark paid failed.');
+    }
   }
 
   async function saveAnnotation(dataUrl: string, strokes: unknown[]) {
     const blob = await (await fetch(dataUrl)).blob();
     const baseName = annotating?.file_name?.replace(/\.[^.]+$/, '') || 'annotation';
     const file = new File([blob], `${baseName}-marked-up.png`, { type: 'image/png' });
-
     await uploadFile(file, file.name);
 
     if (annotating) {
-      await fetch(`/api/conversations/${conversationId}/annotations`, {
-        method: 'POST',
-        headers: { ...headers, 'content-type': 'application/json' },
-        body: JSON.stringify({ sourceAttachmentId: annotating.id, strokes, createdBy: role })
+      await saveAnnotationRecord(conversationId, {
+        sourceAttachmentId: annotating.id,
+        strokes,
+        createdBy: role
       });
     }
+  }
+
+  if (!accessOk) {
+    return (
+      <div className="kiaro-card p-8">
+        <h1 className="font-display text-3xl font-black">Access needed</h1>
+        <p className="mt-3 text-sm leading-6 text-kiaro-muted">This conversation requires a valid access key or admin secret.</p>
+      </div>
+    );
   }
 
   return (
@@ -193,6 +199,7 @@ export function ConversationView({
               </div>
             ) : null}
           </div>
+          {error ? <div className="mt-4 rounded-2xl border border-red-400/25 bg-red-500/10 p-4 text-sm text-red-100">{error}</div> : null}
         </div>
 
         <div className="flex-1 overflow-y-auto p-5">

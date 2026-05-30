@@ -2,6 +2,7 @@
 
 import { GoogleButton } from '@/components/GoogleButton';
 import { TopNav } from '@/components/TopNav';
+import { resumeConversation, startConversation } from '@/lib/firebase/data';
 import { ArrowRight, FileArchive, Image, MessageSquarePlus, ShieldCheck } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -12,6 +13,7 @@ export default function HomePage() {
   const [email, setEmail] = useState('');
   const [resumeKey, setResumeKey] = useState('');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const [stored, setStored] = useState<{ id: string; key: string } | null>(null);
 
   useEffect(() => {
@@ -20,38 +22,32 @@ export default function HomePage() {
     if (id && key) setStored({ id, key });
   }, []);
 
-  async function startConversation() {
+  async function createConversation() {
     setBusy(true);
+    setError('');
     try {
-      const res = await fetch('/api/guest/start', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name, email })
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Could not start conversation');
-      localStorage.setItem('kiaro.conversationId', json.conversationId);
-      localStorage.setItem('kiaro.accessKey', json.accessKey);
-      router.push(`/chat/${json.conversationId}`);
+      const result = await startConversation({ name, email });
+      localStorage.setItem('kiaro.conversationId', result.conversationId);
+      localStorage.setItem('kiaro.accessKey', result.accessKey);
+      router.push(`/chat/${result.conversationId}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not start conversation.');
     } finally {
       setBusy(false);
     }
   }
 
-  async function resumeConversation() {
+  async function continueConversation() {
     if (!resumeKey.trim()) return;
     setBusy(true);
+    setError('');
     try {
-      const res = await fetch('/api/guest/resume', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ accessKey: resumeKey.trim() })
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Could not resume conversation');
-      localStorage.setItem('kiaro.conversationId', json.conversationId);
-      localStorage.setItem('kiaro.accessKey', json.accessKey);
-      router.push(`/chat/${json.conversationId}`);
+      const result = await resumeConversation(resumeKey);
+      localStorage.setItem('kiaro.conversationId', result.conversationId);
+      localStorage.setItem('kiaro.accessKey', result.accessKey);
+      router.push(`/chat/${result.conversationId}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not resume conversation.');
     } finally {
       setBusy(false);
     }
@@ -94,6 +90,8 @@ export default function HomePage() {
             No account required. Save the access key after starting, or use Google login when you want a persistent account later.
           </p>
 
+          {error ? <div className="mt-5 rounded-2xl border border-red-400/25 bg-red-500/10 p-4 text-sm text-red-100">{error}</div> : null}
+
           {stored ? (
             <button onClick={() => router.push(`/chat/${stored.id}`)} className="btn-primary mt-6 flex w-full items-center justify-center gap-2 px-5 py-4 text-sm">
               Continue saved conversation <ArrowRight size={16} />
@@ -103,7 +101,7 @@ export default function HomePage() {
           <div className="mt-6 grid gap-3">
             <input className="glass-input px-4 py-4" placeholder="Name / studio name optional" value={name} onChange={(e) => setName(e.target.value)} />
             <input className="glass-input px-4 py-4" placeholder="Email optional" value={email} onChange={(e) => setEmail(e.target.value)} />
-            <button disabled={busy} onClick={startConversation} className="btn-primary flex items-center justify-center gap-2 px-5 py-4 text-sm">
+            <button disabled={busy} onClick={createConversation} className="btn-primary flex items-center justify-center gap-2 px-5 py-4 text-sm">
               Start conversation <ArrowRight size={16} />
             </button>
           </div>
@@ -112,7 +110,7 @@ export default function HomePage() {
 
           <div className="grid gap-3">
             <input className="glass-input px-4 py-4 uppercase" placeholder="Access key, e.g. KIA-ABCD-1234" value={resumeKey} onChange={(e) => setResumeKey(e.target.value.toUpperCase())} />
-            <button disabled={busy || !resumeKey.trim()} onClick={resumeConversation} className="btn-ghost px-5 py-4 text-sm font-bold">
+            <button disabled={busy || !resumeKey.trim()} onClick={continueConversation} className="btn-ghost px-5 py-4 text-sm font-bold">
               Resume with access key
             </button>
           </div>
