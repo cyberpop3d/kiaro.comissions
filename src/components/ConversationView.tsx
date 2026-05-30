@@ -32,13 +32,23 @@ function AttachmentPreview({
           </div>
         </button>
       ) : (
-        <a href={attachment.signed_url || '#'} target="_blank" rel="noreferrer" className="flex items-center justify-between gap-3 text-sm text-kiaro-text">
+        <a href={attachmentDownloadUrl(attachment)} className="flex items-center justify-between gap-3 text-sm text-kiaro-text">
           <span className="flex items-center gap-2"><Paperclip size={16} /> {attachment.file_name}</span>
           <span className="text-xs text-kiaro-muted">Download</span>
         </a>
       )}
     </div>
   );
+}
+
+
+function attachmentDownloadUrl(attachment: Attachment) {
+  if (!attachment.signed_url) return '#';
+  const params = new URLSearchParams({
+    url: attachment.signed_url,
+    filename: attachment.file_name || 'download'
+  });
+  return `/api/download?${params.toString()}`;
 }
 
 function EmptyLibraryCard({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
@@ -517,12 +527,12 @@ export function ConversationView({
             {fileAttachments.length ? (
               fileAttachments.map((attachment) => (
                 <div key={attachment.id} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.035] p-4 text-sm kiaro-hover">
-                  <a href={attachment.signed_url || '#'} target="_blank" rel="noreferrer" className="flex min-w-0 flex-1 items-center gap-3">
+                  <a href={attachmentDownloadUrl(attachment)} className="flex min-w-0 flex-1 items-center gap-3">
                     <FileArchive size={18} className="shrink-0 text-kiaro-neon" />
                     <span className="truncate">{attachment.file_name}</span>
                   </a>
                   <div className="flex shrink-0 items-center gap-2">
-                    <a href={attachment.signed_url || '#'} target="_blank" rel="noreferrer" className="text-xs text-kiaro-muted hover:text-kiaro-text">Download</a>
+                    <a href={attachmentDownloadUrl(attachment)} className="text-xs text-kiaro-muted hover:text-kiaro-text">Download</a>
                     {role === 'admin' ? (
                       <button
                         type="button"
