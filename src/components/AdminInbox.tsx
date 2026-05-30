@@ -4,19 +4,24 @@ import {
   defaultChatConfig,
   defaultDesignConfig,
   defaultHomeConfig,
+  defaultStorageSettings,
+  deleteStorageInventoryItem,
   ensureAnonymousUser,
   saveChatConfig,
   saveDesignConfig,
   saveHomeConfig,
+  saveStorageSettings,
   setConversationsArchived,
   subscribeToChatConfig,
   subscribeToConversations,
   subscribeToDesignConfig,
-  subscribeToHomeConfig
+  subscribeToHomeConfig,
+  subscribeToStorageSettings,
+  loadStorageInventory
 } from '@/lib/firebase/data';
-import type { ChatInterfaceConfig, Conversation, DesignConfig, HomeInterfaceConfig } from '@/lib/types';
+import type { ChatInterfaceConfig, Conversation, DesignConfig, HomeInterfaceConfig, StorageInventoryItem, StorageSettingsConfig } from '@/lib/types';
 import { applyDesignConfig } from '@/utils/design';
-import { Archive, ArchiveRestore, CheckSquare2, GripVertical, Inbox, LayoutPanelTop, MessageSquareText, Palette, Save, Search, Square, Type } from 'lucide-react';
+import { AlertTriangle, Archive, ArchiveRestore, CheckSquare2, ExternalLink, GripVertical, HardDrive, Inbox, LayoutPanelTop, MessageSquareText, Palette, RefreshCw, Save, Search, Settings, Square, Trash2, Type } from 'lucide-react';
 import Link from 'next/link';
 import { type DragEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
 
@@ -419,13 +424,267 @@ function DesignSystemEditor() {
   );
 }
 
+function formatBytes(bytes?: number | null) {
+  const value = Number(bytes || 0);
+  if (!value) return '0 MB';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let size = value;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  return `${size >= 10 || unitIndex === 0 ? size.toFixed(0) : size.toFixed(2)} ${units[unitIndex]}`;
+}
+
+function bytesToGb(bytes: number) {
+  return bytes / 1024 / 1024 / 1024;
+}
+
+function normalizeStorageNumber(value: string) {
+  const parsed = Number(value.replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function StorageManager({ conversations, adminSecret }: { conversations: Conversation[]; adminSecret: string }) {
+  const [items, setItems] = useState<StorageInventoryItem[]>([]);
+  const [settings, setSettings] = useState<StorageSettingsConfig>(defaultStorageSettings);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState('');
+  const [query, setQuery] = useState('');
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+    ensureAnonymousUser()
+      .then(() => {
+        unsubscribe = subscribeToStorageSettings(setSettings);
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load storage settings.'));
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
+
+  async function refresh() {
+    setLoading(true);
+    setError('');
+    setNotice('');
+    try {
+      const nextItems = await loadStorageInventory(conversations);
+      setItems(nextItems);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load storage inventory.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (conversations.length) void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversations.length]);
+
+  async function saveSettings() {
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      await saveStorageSettings(settings);
+      setNotice('Storage settings saved.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save storage settings.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteItem(item: StorageInventoryItem) {
+    const confirmed = window.confirm(`Permanently delete ${item.file_name}? This removes the file from storage and the related site record.`);
+    if (!confirmed) return;
+    setDeletingId(item.id);
+    setError('');
+    setNotice('');
+    try {
+      await deleteStorageInventoryItem(item, adminSecret);
+      setItems((current) => current.filter((candidate) => candidate.id !== item.id));
+      setNotice(`${item.file_name} deleted.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not delete this file.');
+    } finally {
+      setDeletingId('');
+    }
+  }
+
+  const totalBytes = items.reduce((sum, item) => sum + Number(item.size_bytes || 0), 0);
+  const usedGb = bytesToGb(totalBytes);
+  const allowedGb = Math.max(0, Number(settings.allowedGb || 0));
+  const usagePercent = allowedGb > 0 ? Math.min(999, (usedGb / allowedGb) * 100) : 0;
+  const isNearLimit = allowedGb > 0 && usagePercent >= Number(settings.warningPercent || 85);
+
+  const filteredItems = useMemo(() => {
+    const q = query.toLowerCase().trim();
+    if (!q) return items;
+    return items.filter((item) => {
+      return [item.file_name, item.conversation_label, item.project_label, item.area_label, item.mime_type, item.storage_path]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(q));
+    });
+  }, [items, query]);
+
+  const imageCount = items.filter((item) => item.kind === 'image' || item.kind === 'annotation').length;
+  const fileCount = items.length - imageCount;
+
+  return (
+    <div className="grid gap-5">
+      <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
+        <div className="kiaro-card p-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/14 bg-white/[0.035] px-4 py-2 text-xs font-bold uppercase tracking-[0.2em] text-kiaro-muted">
+                <HardDrive size={15} /> Storage
+              </div>
+              <h2 className="mt-4 font-display text-4xl font-black">Site file inventory</h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-kiaro-muted">
+                Review every uploaded image and file across all conversations, projects and final deliveries. Deleting here is permanent.
+              </p>
+            </div>
+            <button onClick={refresh} disabled={loading} className="btn-ghost inline-flex items-center gap-2 px-5 py-3 text-sm font-bold">
+              <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> {loading ? 'Scanning…' : 'Refresh inventory'}
+            </button>
+          </div>
+
+          {error ? <div className="mt-5 rounded-2xl border border-red-400/25 bg-red-500/10 p-4 text-sm text-red-100">{error}</div> : null}
+          {notice ? <div className="mt-5 rounded-2xl border border-kiaro-lime/20 bg-kiaro-lime/10 p-4 text-sm text-kiaro-lime">{notice}</div> : null}
+
+          <div className="mt-6 grid gap-3 md:grid-cols-3">
+            <div className="rounded-[22px] border border-white/10 bg-white/[0.025] p-5">
+              <div className="text-xs font-bold uppercase tracking-[0.2em] text-kiaro-muted">Used storage</div>
+              <div className="mt-2 font-display text-4xl font-black">{usedGb.toFixed(3)} GB</div>
+            </div>
+            <div className="rounded-[22px] border border-white/10 bg-white/[0.025] p-5">
+              <div className="text-xs font-bold uppercase tracking-[0.2em] text-kiaro-muted">Inventory</div>
+              <div className="mt-2 font-display text-3xl font-black">{items.length} items</div>
+              <div className="mt-1 text-xs text-kiaro-muted">{imageCount} images · {fileCount} files</div>
+            </div>
+            <div className={cx('rounded-[22px] border p-5', isNearLimit ? 'border-amber-300/35 bg-amber-300/10' : 'border-white/10 bg-white/[0.025]')}>
+              <div className="text-xs font-bold uppercase tracking-[0.2em] text-kiaro-muted">Storage warning</div>
+              <div className="mt-2 font-display text-3xl font-black">{allowedGb > 0 ? `${usagePercent.toFixed(1)}%` : 'Off'}</div>
+              <div className="mt-1 text-xs text-kiaro-muted">Warning only. Uploads stay enabled.</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="kiaro-card p-6">
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em] text-kiaro-muted">
+            <AlertTriangle size={15} /> Storage limit notice
+          </div>
+          <p className="mt-3 text-sm leading-6 text-kiaro-muted">
+            Set your own internal storage target. This only notifies you when usage is high; it never blocks customer uploads.
+          </p>
+          <div className="mt-5 grid gap-3">
+            <Field label="Allowed storage in GB">
+              <TextInput value={String(settings.allowedGb)} onChange={(value) => setSettings((current) => ({ ...current, allowedGb: normalizeStorageNumber(value) }))} />
+            </Field>
+            <Field label="Warning threshold percent">
+              <TextInput value={String(settings.warningPercent)} onChange={(value) => setSettings((current) => ({ ...current, warningPercent: normalizeStorageNumber(value) }))} />
+            </Field>
+            <button onClick={saveSettings} disabled={saving} className="btn-primary px-5 py-3 text-sm font-bold">
+              {saving ? 'Saving…' : 'Save storage settings'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="kiaro-card p-5">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-display text-2xl font-black">All uploaded files</h3>
+            <p className="mt-1 text-sm text-kiaro-muted">Files are shown independently from chat threads, with their conversation and project context.</p>
+          </div>
+          <label className="glass-input flex min-w-72 items-center gap-3 px-4 py-3">
+            <Search size={18} className="text-kiaro-muted" />
+            <input className="w-full bg-transparent outline-none" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search files, chats, projects…" />
+          </label>
+        </div>
+
+        <div className="grid gap-3">
+          {filteredItems.map((item) => {
+            const fullContext = `${item.conversation_label} / ${item.project_label} / ${item.area_label} / ${item.file_name}`;
+            return (
+              <div key={item.id} title={fullContext} className="grid gap-4 rounded-[22px] border border-white/10 bg-white/[0.025] p-4 transition hover:border-white/28 hover:bg-white/[0.045] md:grid-cols-[1fr_220px_150px_160px] md:items-center">
+                <div className="min-w-0">
+                  <div className="truncate font-display text-lg font-black">{item.file_name}</div>
+                  <div className="mt-1 truncate text-xs text-kiaro-muted">{item.mime_type || 'Unknown type'} · {formatBytes(item.size_bytes)}</div>
+                </div>
+                <div className="min-w-0 text-sm">
+                  <div className="truncate font-bold text-kiaro-text">{item.conversation_label}</div>
+                  <div className="truncate text-xs text-kiaro-muted">{item.project_label} · {item.area_label}</div>
+                </div>
+                <div className="rounded-full border border-white/10 px-3 py-2 text-center text-xs font-bold uppercase tracking-[0.14em] text-kiaro-muted">
+                  {item.source === 'final_delivery' ? 'Delivery' : item.kind === 'image' || item.kind === 'annotation' ? 'Image' : 'File'}
+                </div>
+                <div className="flex items-center justify-end gap-2">
+                  {item.signed_url ? (
+                    <a href={item.signed_url} target="_blank" rel="noreferrer" className="btn-ghost inline-flex h-10 w-10 items-center justify-center rounded-full" aria-label="Open file">
+                      <ExternalLink size={15} />
+                    </a>
+                  ) : null}
+                  <button onClick={() => void deleteItem(item)} disabled={deletingId === item.id} className="btn-ghost inline-flex items-center gap-2 px-4 py-2 text-xs font-bold text-red-100" aria-label="Permanently delete file">
+                    <Trash2 size={15} /> {deletingId === item.id ? 'Deleting…' : 'Delete'}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          {!filteredItems.length ? <div className="rounded-[24px] border border-white/10 bg-white/[0.025] p-8 text-center text-sm text-kiaro-muted">No files match this view.</div> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminPanelSettings() {
+  const [section, setSection] = useState<'website' | 'chat' | 'design'>('website');
+  const sections: Array<{ id: typeof section; label: string; icon: ReactNode }> = [
+    { id: 'website', label: 'Website interface', icon: <LayoutPanelTop size={15} /> },
+    { id: 'chat', label: 'Chat interface', icon: <MessageSquareText size={15} /> },
+    { id: 'design', label: 'Design system', icon: <Type size={15} /> }
+  ];
+
+  return (
+    <div className="grid gap-5">
+      <div className="kiaro-card p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-display text-3xl font-black">Admin panel</h2>
+            <p className="mt-2 text-sm leading-6 text-kiaro-muted">Edit public copy, chat labels and global visual settings from one organized control area.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {sections.map((item) => (
+              <button key={item.id} onClick={() => setSection(item.id)} className={cx(section === item.id ? 'btn-primary' : 'btn-ghost', 'inline-flex items-center gap-2 px-4 py-2 text-xs font-bold')}>
+                {item.icon} {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      {section === 'website' ? <WebsiteInterfaceEditor /> : null}
+      {section === 'chat' ? <ChatInterfaceEditor /> : null}
+      {section === 'design' ? <DesignSystemEditor /> : null}
+    </div>
+  );
+}
+
 export function AdminInbox() {
   const [secret, setSecret] = useState('');
   const [entered, setEntered] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
-  const [tab, setTab] = useState<'inbox' | 'website' | 'chat' | 'design'>('inbox');
+  const [tab, setTab] = useState<'inbox' | 'storage' | 'adminPanel'>('inbox');
   const [inboxView, setInboxView] = useState<'active' | 'archived'>('active');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [draggingIds, setDraggingIds] = useState<string[]>([]);
@@ -568,9 +827,8 @@ export function AdminInbox() {
 
   const navItems: Array<{ id: typeof tab; label: string; icon: ReactNode }> = [
     { id: 'inbox', label: 'Inbox', icon: <Inbox size={16} /> },
-    { id: 'website', label: 'Website interface', icon: <LayoutPanelTop size={16} /> },
-    { id: 'chat', label: 'Chat interface', icon: <MessageSquareText size={16} /> },
-    { id: 'design', label: 'Design system', icon: <Type size={16} /> }
+    { id: 'storage', label: 'Storage', icon: <HardDrive size={16} /> },
+    { id: 'adminPanel', label: 'Admin panel', icon: <Settings size={16} /> }
   ];
 
   return (
@@ -600,9 +858,8 @@ export function AdminInbox() {
 
       {error ? <div className="mb-5 rounded-2xl border border-red-400/25 bg-red-500/10 p-4 text-sm text-red-100">{error}</div> : null}
 
-      {tab === 'website' ? <WebsiteInterfaceEditor /> : null}
-      {tab === 'chat' ? <ChatInterfaceEditor /> : null}
-      {tab === 'design' ? <DesignSystemEditor /> : null}
+      {tab === 'storage' ? <StorageManager conversations={conversations} adminSecret={secret} /> : null}
+      {tab === 'adminPanel' ? <AdminPanelSettings /> : null}
 
       {tab === 'inbox' ? (
         <div className="grid gap-5">

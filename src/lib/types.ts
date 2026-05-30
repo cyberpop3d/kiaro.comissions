@@ -92,6 +92,32 @@ export type Message = {
   offers?: Offer | null;
 };
 
+
+export type StorageInventoryItem = {
+  id: string;
+  source: 'conversation_attachment' | 'final_delivery';
+  conversation_id: string;
+  conversation_label: string;
+  project_id: string | null;
+  project_label: string;
+  area_label: string;
+  file_name: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  storage_path: string;
+  signed_url: string | null;
+  kind: 'image' | 'file' | 'annotation';
+  uploaded_by: Sender;
+  created_at: string;
+  attachment?: Attachment | null;
+  final_file?: ProjectFinalFile | null;
+};
+
+export type StorageSettingsConfig = {
+  allowedGb: number;
+  warningPercent: number;
+};
+
 export type HomeInterfaceConfig = {
   eyebrow: string;
   title: string;

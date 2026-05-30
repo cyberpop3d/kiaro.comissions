@@ -1,10 +1,11 @@
-import type { Attachment, ChatInterfaceConfig, Conversation, DesignConfig, HomeInterfaceConfig, Message, Offer, PaidProject, ProjectFinalFile, ProjectStatus, Sender } from '@/lib/types';
+import type { Attachment, ChatInterfaceConfig, Conversation, DesignConfig, HomeInterfaceConfig, Message, Offer, PaidProject, ProjectFinalFile, ProjectStatus, Sender, StorageInventoryItem, StorageSettingsConfig } from '@/lib/types';
 import { getFirebaseAuth, getFirebaseDb } from '@/lib/firebase/client';
 import {
   addDoc,
   arrayRemove,
   arrayUnion,
   collection,
+  collectionGroup,
   deleteDoc,
   doc,
   getDoc,
@@ -83,6 +84,11 @@ export const defaultDesignConfig: DesignConfig = {
   cardStyle: 'soft',
   accentColor: '#f4f3ec',
   backgroundMode: 'subtle'
+};
+
+export const defaultStorageSettings: StorageSettingsConfig = {
+  allowedGb: 2,
+  warningPercent: 85
 };
 
 export const defaultHomeConfig: HomeInterfaceConfig = {
@@ -1005,4 +1011,120 @@ export async function saveDesignConfig(config: DesignConfig) {
     },
     { merge: true }
   );
+}
+
+export function subscribeToStorageSettings(callback: (config: StorageSettingsConfig) => void): Unsubscribe {
+  const db = getFirebaseDb();
+  return onSnapshot(doc(db, 'siteConfig', 'storage'), (snapshot) => {
+    callback({ ...defaultStorageSettings, ...(snapshot.exists() ? snapshot.data() : {}) } as StorageSettingsConfig);
+  });
+}
+
+export async function saveStorageSettings(config: StorageSettingsConfig) {
+  const db = getFirebaseDb();
+  await setDoc(
+    doc(db, 'siteConfig', 'storage'),
+    {
+      allowedGb: Math.max(0, Number(config.allowedGb) || 0),
+      warningPercent: Math.min(100, Math.max(1, Number(config.warningPercent) || 85)),
+      updated_at: serverTimestamp()
+    },
+    { merge: true }
+  );
+}
+
+function conversationLabelFrom(conversation?: Conversation | null) {
+  if (!conversation) return 'Unknown conversation';
+  return conversation.guest_sessions?.name || conversation.title || 'Unnamed client';
+}
+
+export async function loadStorageInventory(conversations: Conversation[]): Promise<StorageInventoryItem[]> {
+  await ensureAnonymousUser();
+  const db = getFirebaseDb();
+  const conversationMap = new Map(conversations.map((conversation) => [conversation.id, conversation]));
+  const projectLabelMap = new Map<string, string>();
+
+  const projectSnapshot = await getDocs(collectionGroup(db, 'projects'));
+  const finalItems: StorageInventoryItem[] = [];
+
+  projectSnapshot.docs.forEach((projectDoc) => {
+    const data = projectDoc.data();
+    const conversationId = String(data.conversation_id || projectDoc.ref.parent.parent?.id || '');
+    if (!conversationId) return;
+    const projectTitle = String(data.title || 'Untitled project');
+    projectLabelMap.set(`${conversationId}:${projectDoc.id}`, projectTitle);
+
+    const finalFiles = Array.isArray(data.final_files) ? data.final_files.map(mapFinalFile).filter(Boolean) as ProjectFinalFile[] : [];
+    finalFiles.forEach((file) => {
+      finalItems.push({
+        id: `final:${conversationId}:${projectDoc.id}:${file.id}`,
+        source: 'final_delivery',
+        conversation_id: conversationId,
+        conversation_label: conversationLabelFrom(conversationMap.get(conversationId)),
+        project_id: projectDoc.id,
+        project_label: projectTitle,
+        area_label: 'Final delivery',
+        file_name: file.file_name,
+        mime_type: file.mime_type,
+        size_bytes: file.size_bytes,
+        storage_path: file.storage_path,
+        signed_url: file.signed_url,
+        kind: file.mime_type?.startsWith('image/') ? 'image' : 'file',
+        uploaded_by: file.uploaded_by,
+        created_at: file.created_at,
+        attachment: null,
+        final_file: file
+      });
+    });
+  });
+
+  const messageSnapshot = await getDocs(query(collectionGroup(db, 'messages'), where('type', '==', 'attachment')));
+  const attachmentItems: StorageInventoryItem[] = [];
+
+  messageSnapshot.docs.forEach((messageDoc) => {
+    const data = messageDoc.data();
+    const attachment = mapAttachment(data.attachment);
+    if (!attachment || !attachment.storage_path) return;
+    const conversationId = attachment.conversation_id || String(data.conversation_id || messageDoc.ref.parent.parent?.id || '');
+    if (!conversationId) return;
+    const projectId = attachment.project_id || null;
+    const projectLabel = projectId ? projectLabelMap.get(`${conversationId}:${projectId}`) || 'Linked project' : 'General uploads';
+    const areaLabel = attachment.kind === 'image' || attachment.kind === 'annotation' ? 'References' : 'Files';
+
+    attachmentItems.push({
+      id: `attachment:${conversationId}:${attachment.id}`,
+      source: 'conversation_attachment',
+      conversation_id: conversationId,
+      conversation_label: conversationLabelFrom(conversationMap.get(conversationId)),
+      project_id: projectId,
+      project_label: projectLabel,
+      area_label: areaLabel,
+      file_name: attachment.file_name,
+      mime_type: attachment.mime_type,
+      size_bytes: attachment.size_bytes,
+      storage_path: attachment.storage_path,
+      signed_url: attachment.signed_url || null,
+      kind: attachment.kind,
+      uploaded_by: attachment.uploaded_by,
+      created_at: attachment.created_at,
+      attachment,
+      final_file: null
+    });
+  });
+
+  return [...attachmentItems, ...finalItems].sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
+export async function deleteStorageInventoryItem(item: StorageInventoryItem, adminSecret: string) {
+  if (item.source === 'conversation_attachment' && item.attachment) {
+    await deleteAttachmentPermanently(item.conversation_id, item.attachment, adminSecret, true);
+    return;
+  }
+
+  if (item.source === 'final_delivery' && item.project_id && item.final_file) {
+    await deletePaidProjectFinalFile(item.conversation_id, item.project_id, item.final_file, adminSecret);
+    return;
+  }
+
+  throw new Error('Storage item cannot be deleted because its source metadata is missing.');
 }
