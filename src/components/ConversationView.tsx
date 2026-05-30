@@ -7,10 +7,10 @@ import {
   deleteAttachmentPermanently,
   deletePaidProjectFinalFile,
   markOfferPaid,
-  PAID_PROJECT_SLOT_COUNT,
   saveAnnotationRecord,
   sendOfferMessage,
   sendTextMessage,
+  subscribeToConversation,
   subscribeToMessages,
   subscribeToPaidProjects,
   updatePaidProjectStatus,
@@ -18,7 +18,7 @@ import {
   uploadPaidProjectFinalFile,
   verifyAccess
 } from '@/lib/firebase/data';
-import type { Attachment, Message, PaidProject, ProjectFinalFile, ProjectStatus } from '@/lib/types';
+import type { Attachment, Conversation, Message, PaidProject, ProjectFinalFile, ProjectStatus } from '@/lib/types';
 import {
   CheckCircle2,
   ChevronDown,
@@ -44,28 +44,56 @@ function cx(...parts: Array<string | false | null | undefined>) {
 
 function attachmentDownloadUrl(attachment: { signed_url?: string | null; file_name?: string | null }) {
   if (!attachment.signed_url) return '#';
-  const params = new URLSearchParams({
-    url: attachment.signed_url,
-    filename: attachment.file_name || 'download'
-  });
+  const params = new URLSearchParams({ url: attachment.signed_url, filename: attachment.file_name || 'download' });
   return `/api/download?${params.toString()}`;
 }
 
 function projectFileDownloadUrl(file: ProjectFinalFile) {
-  const params = new URLSearchParams({
-    url: file.signed_url,
-    filename: file.file_name || 'download'
-  });
+  const params = new URLSearchParams({ url: file.signed_url, filename: file.file_name || 'download' });
   return `/api/download?${params.toString()}`;
 }
 
-function AttachmentPreview({
-  attachment,
-  onAnnotate
-}: {
-  attachment: Attachment;
-  onAnnotate: (attachment: Attachment) => void;
-}) {
+function statusCopy(status?: ProjectStatus) {
+  if (!status) return { label: 'No project', tone: 'neutral', description: 'Create a project request to begin the commission workflow.' };
+  if (status === 'requested') return { label: 'Scope discussion', tone: 'neutral', description: 'Project details are being discussed before a custom offer is sent.' };
+  if (status === 'offer_sent') return { label: 'Waiting for payment', tone: 'warning', description: 'A payment offer has been sent. Delivery stays locked until payment is confirmed.' };
+  if (status === 'active') return { label: 'Payment confirmed', tone: 'success', description: 'Payment is confirmed. Final delivery files can be unlocked here.' };
+  return { label: 'Case closed', tone: 'closed', description: 'This project has been closed. Final files stay visible unless Kiaro Studio removes them.' };
+}
+
+function projectPaymentConfirmed(project?: PaidProject | null) {
+  return Boolean(project && (project.active || project.status === 'active' || project.status === 'closed'));
+}
+
+function StatusPill({ status }: { status?: ProjectStatus }) {
+  const copy = statusCopy(status);
+  return (
+    <span
+      className={cx(
+        'rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em]',
+        copy.tone === 'success' && 'border-kiaro-lime/35 bg-kiaro-lime/10 text-kiaro-lime',
+        copy.tone === 'warning' && 'border-amber-200/25 bg-amber-300/10 text-amber-100',
+        copy.tone === 'closed' && 'border-white/12 bg-white/[0.035] text-kiaro-muted',
+        copy.tone === 'neutral' && 'border-white/12 bg-white/[0.035] text-kiaro-muted'
+      )}
+    >
+      {copy.label}
+    </span>
+  );
+}
+
+function EmptyLibraryCard({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
+  return (
+    <div className="grid min-h-32 place-items-center rounded-3xl border border-dashed border-white/10 bg-white/[0.02] p-6 text-center text-kiaro-muted">
+      <div>
+        <Icon className="mx-auto opacity-35" size={40} />
+        <div className="mt-3 text-xs font-bold uppercase tracking-[0.22em] opacity-70">{label}</div>
+      </div>
+    </div>
+  );
+}
+
+function AttachmentPreview({ attachment, onAnnotate }: { attachment: Attachment; onAnnotate: (attachment: Attachment) => void }) {
   const isImage = (attachment.kind === 'image' || attachment.kind === 'annotation') && attachment.signed_url;
 
   return (
@@ -75,27 +103,16 @@ function AttachmentPreview({
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={attachment.signed_url || ''} alt={attachment.file_name} className="max-h-80 w-full rounded-xl object-contain" />
           <div className="mt-3 flex items-center justify-between gap-3 text-xs text-kiaro-muted">
-            <span className="flex items-center gap-2"><ImageIcon size={14} /> {attachment.file_name}</span>
+            <span className="flex min-w-0 items-center gap-2"><ImageIcon size={14} /> <span className="truncate">{attachment.file_name}</span></span>
             <span>Edit</span>
           </div>
         </button>
       ) : (
         <a href={attachmentDownloadUrl(attachment)} className="flex items-center justify-between gap-3 text-sm text-kiaro-text">
-          <span className="flex items-center gap-2"><Paperclip size={16} /> {attachment.file_name}</span>
-          <span className="text-xs text-kiaro-muted">Download</span>
+          <span className="flex min-w-0 items-center gap-2"><Paperclip size={16} /> <span className="truncate">{attachment.file_name}</span></span>
+          <span className="shrink-0 text-xs text-kiaro-muted">Download</span>
         </a>
       )}
-    </div>
-  );
-}
-
-function EmptyLibraryCard({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
-  return (
-    <div className="grid min-h-36 place-items-center rounded-3xl border border-dashed border-white/10 bg-white/[0.025] p-6 text-center text-kiaro-muted">
-      <div>
-        <Icon className="mx-auto opacity-40" size={42} />
-        <div className="mt-3 text-xs font-bold uppercase tracking-[0.22em] opacity-70">{label}</div>
-      </div>
     </div>
   );
 }
@@ -177,94 +194,191 @@ function ImageLibraryCard({
   );
 }
 
-function statusLabel(status: ProjectStatus) {
-  if (status === 'requested') return 'Requested';
-  if (status === 'offer_sent') return 'Offer sent';
-  if (status === 'active') return 'Paid access';
-  return 'Case closed';
+function getMessageDisplayName(sender: Message['sender'], viewerRole: 'customer' | 'admin') {
+  if (sender === 'system') return 'Update';
+  if (sender === viewerRole) return 'You';
+  if (sender === 'admin') return 'Kiaro Studio';
+  return 'Client';
 }
 
-function projectPaymentConfirmed(project: PaidProject) {
-  return project.active || project.status === 'active' || project.status === 'closed';
+function formatMessageTime(value: string) {
+  return new Date(value).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-function ProjectStatusPill({ project }: { project: PaidProject }) {
-  const paid = projectPaymentConfirmed(project);
+function NewProjectModal({ title, setTitle, busy, onCreate, onClose }: { title: string; setTitle: (title: string) => void; busy: boolean; onCreate: () => void; onClose: () => void }) {
   return (
-    <span
-      className={cx(
-        'shrink-0 rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em]',
-        paid ? 'border-kiaro-lime/35 bg-kiaro-lime/10 text-kiaro-lime' : 'border-white/10 bg-white/[0.025] text-kiaro-muted'
-      )}
-    >
-      {paid ? 'Payment confirmed' : 'Waiting payment'}
-    </span>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 px-5 backdrop-blur-sm">
+      <div className="kiaro-card w-full max-w-lg p-6">
+        <h2 className="font-display text-3xl font-black">Start a project</h2>
+        <p className="mt-3 text-sm leading-6 text-kiaro-muted">
+          We will discuss the project details inside this workspace. For now, choose a simple project name such as the character name or Project 1. After the scope is clear, Kiaro Studio will send a custom payment offer. Once payment is completed and manually confirmed, the final delivery area can be activated.
+        </p>
+        <input
+          className="glass-input mt-5 w-full px-4 py-4"
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') onCreate();
+          }}
+          placeholder="Project name, character name, or Project 1"
+        />
+        <div className="mt-4 flex gap-3">
+          <button className="btn-primary flex-1 px-5 py-3 text-sm" disabled={busy} onClick={onCreate}>Create project</button>
+          <button className="btn-ghost px-5 py-3 text-sm font-bold" onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
-function CurrentProjectSummary({ project }: { project?: PaidProject }) {
-  if (!project) return null;
-
-  const paid = projectPaymentConfirmed(project);
-  const finalFiles = project.final_files || [];
+function ProjectSwitcher({
+  projects,
+  currentProject,
+  selectedProjectId,
+  setSelectedProjectId,
+  onNewProject,
+  role
+}: {
+  projects: PaidProject[];
+  currentProject?: PaidProject | null;
+  selectedProjectId: string | null;
+  setSelectedProjectId: (id: string) => void;
+  onNewProject: () => void;
+  role: 'customer' | 'admin';
+}) {
+  const [open, setOpen] = useState(false);
 
   return (
-    <div
-      className={cx(
-        'group relative overflow-hidden rounded-3xl border p-4 transition',
-        paid ? 'border-kiaro-lime/40 bg-kiaro-lime/[0.055]' : 'border-white/10 bg-white/[0.03] hover:border-white/20'
-      )}
-      title={paid ? 'Payment confirmed. Delivery access is active.' : 'Waiting for payment confirmation.'}
-    >
-      {!paid ? (
-        <div className="pointer-events-none absolute inset-x-4 top-3 z-10 translate-y-[-6px] rounded-full border border-white/10 bg-black/80 px-3 py-2 text-center text-[10px] font-bold uppercase tracking-[0.16em] text-kiaro-muted opacity-0 shadow-2xl backdrop-blur transition group-hover:translate-y-0 group-hover:opacity-100">
-          Waiting for payment confirmation
+    <div className="kiaro-card p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-kiaro-muted">Active workspace</div>
+          <h2 className="mt-1 truncate font-display text-2xl font-black">{currentProject?.title || 'No project yet'}</h2>
+          <p className="mt-2 text-xs leading-5 text-kiaro-muted">{statusCopy(currentProject?.status).description}</p>
+        </div>
+        <StatusPill status={currentProject?.status} />
+      </div>
+
+      <div className="mt-4 flex gap-2">
+        <button type="button" onClick={onNewProject} className="btn-primary flex flex-1 items-center justify-center gap-2 px-4 py-3 text-xs font-black">
+          <FolderPlus size={15} /> New project
+        </button>
+        {projects.length > 1 ? (
+          <button type="button" onClick={() => setOpen(!open)} className="btn-ghost grid h-11 w-11 place-items-center" title="Switch project">
+            <ChevronDown size={17} className={cx('transition', open && 'rotate-180')} />
+          </button>
+        ) : null}
+      </div>
+
+      {open ? (
+        <div className="mt-3 grid gap-2">
+          {projects.map((project) => (
+            <button
+              type="button"
+              key={project.id}
+              onClick={() => {
+                setSelectedProjectId(project.id);
+                setOpen(false);
+              }}
+              className={cx('rounded-2xl border p-3 text-left transition hover:border-white/28', selectedProjectId === project.id ? 'border-white/28 bg-white/[0.065]' : 'border-white/10 bg-white/[0.025]')}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="min-w-0 truncate text-sm font-bold">{project.title}</span>
+                <StatusPill status={project.status} />
+              </div>
+            </button>
+          ))}
         </div>
       ) : null}
 
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-kiaro-muted">{paid ? 'Active project' : 'Current project'}</div>
-          <div className="mt-1 truncate font-display text-xl font-black text-kiaro-text">{project.title}</div>
-        </div>
-        <ProjectStatusPill project={project} />
-      </div>
-      <p className="mt-3 text-xs leading-5 text-kiaro-muted">
-        {paid ? 'Payment is confirmed. Final delivery access is active when files are uploaded.' : 'This project is created, but delivery access is locked until payment is confirmed.'}
-      </p>
-      {paid && finalFiles.length ? (
-        <div className="mt-4 space-y-2">
-          {finalFiles.slice(0, 3).map((file) => (
-            <a key={file.id} href={projectFileDownloadUrl(file)} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-xs transition hover:border-white/25">
-              <span className="flex min-w-0 items-center gap-2">
-                <FileArchive size={15} className="shrink-0 text-kiaro-muted" />
-                <span className="truncate">{file.file_name}</span>
-              </span>
-              <span className="shrink-0 font-bold text-kiaro-muted">Download</span>
-            </a>
-          ))}
-          {finalFiles.length > 3 ? <div className="text-center text-[11px] text-kiaro-muted">+{finalFiles.length - 3} more files inside project slots</div> : null}
+      {role === 'admin' && !projects.length ? (
+        <div className="mt-4 rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-4 text-xs leading-5 text-kiaro-muted">
+          The customer has not opened a project yet. You can still chat and ask them to create one when the scope is ready.
         </div>
       ) : null}
     </div>
   );
 }
 
-function PaidProjectCard({
-  slot,
-  project,
+function ReferencesPanel({
+  mainImages,
+  variantsByParent,
+  onAnnotate,
+  onAddVariation,
+  onDelete,
+  role
+}: {
+  mainImages: Attachment[];
+  variantsByParent: Record<string, Attachment[]>;
+  onAnnotate: (attachment: Attachment) => void;
+  onAddVariation: (attachment: Attachment) => void;
+  onDelete: (attachment: Attachment, includeBranches?: boolean) => void;
+  role: 'customer' | 'admin';
+}) {
+  return (
+    <div className="grid gap-3">
+      {mainImages.length ? (
+        mainImages.map((attachment) => (
+          <ImageLibraryCard
+            key={attachment.id}
+            attachment={attachment}
+            variants={variantsByParent[attachment.id] || []}
+            onAnnotate={onAnnotate}
+            onAddVariation={onAddVariation}
+            onDelete={role === 'admin' ? onDelete : undefined}
+          />
+        ))
+      ) : (
+        <EmptyLibraryCard icon={Images} label="No references yet" />
+      )}
+    </div>
+  );
+}
+
+function FilesPanel({ fileAttachments, onDelete, deletingId, role }: { fileAttachments: Attachment[]; onDelete: (attachment: Attachment, includeBranches?: boolean) => void; deletingId?: string | null; role: 'customer' | 'admin' }) {
+  return (
+    <div className="grid gap-3">
+      {fileAttachments.length ? (
+        fileAttachments.map((attachment) => (
+          <div key={attachment.id} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.035] p-4 text-sm kiaro-hover">
+            <a href={attachmentDownloadUrl(attachment)} className="flex min-w-0 flex-1 items-center gap-3">
+              <FileArchive size={18} className="shrink-0 text-kiaro-muted" />
+              <span className="truncate">{attachment.file_name}</span>
+            </a>
+            <div className="flex shrink-0 items-center gap-2">
+              <a href={attachmentDownloadUrl(attachment)} className="text-xs text-kiaro-muted hover:text-kiaro-text">Download</a>
+              {role === 'admin' ? (
+                <button
+                  type="button"
+                  onClick={() => onDelete(attachment, false)}
+                  disabled={deletingId === attachment.id}
+                  title="Permanently delete this file"
+                  className="grid h-8 w-8 place-items-center rounded-full border border-red-300/20 text-red-100 transition hover:border-red-300/45 disabled:opacity-40"
+                >
+                  <Trash2 size={14} />
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ))
+      ) : (
+        <EmptyLibraryCard icon={FileArchive} label="No files yet" />
+      )}
+    </div>
+  );
+}
+
+function DeliveryPanel({
   role,
-  onNewProject,
+  project,
   onActivate,
   onClose,
   onUploadFinal,
   onDeleteFinal,
   working
 }: {
-  slot: number;
-  project?: PaidProject;
   role: 'customer' | 'admin';
-  onNewProject: () => void;
+  project?: PaidProject | null;
   onActivate: (project: PaidProject) => void;
   onClose: (project: PaidProject) => void;
   onUploadFinal: (project: PaidProject) => void;
@@ -272,50 +386,33 @@ function PaidProjectCard({
   working?: boolean;
 }) {
   if (!project) {
-    return (
-      <div className="flex items-center justify-between gap-3 rounded-2xl border border-dashed border-white/10 bg-white/[0.018] p-3 text-kiaro-muted">
-        <div className="min-w-0">
-          <div className="text-[10px] font-bold uppercase tracking-[0.2em]">Slot {String(slot).padStart(2, '0')}</div>
-          <div className="mt-1 text-xs">Empty project slot</div>
-        </div>
-        {role === 'customer' ? (
-          <button type="button" onClick={onNewProject} className="btn-ghost shrink-0 px-3 py-2 text-[11px] font-bold">
-            New project
-          </button>
-        ) : (
-          <Lock size={15} className="shrink-0 opacity-35" />
-        )}
-      </div>
-    );
+    return <EmptyLibraryCard icon={Lock} label="Create a project first" />;
   }
 
   const paid = projectPaymentConfirmed(project);
-  const canSeeDeliverables = role === 'admin' || paid;
   const finalFiles = project.final_files || [];
 
   return (
-    <div
-      className={cx(
-        'rounded-2xl border p-3 transition',
-        paid ? 'border-kiaro-lime/30 bg-kiaro-lime/[0.04]' : 'border-white/10 bg-white/[0.025] hover:border-white/20'
-      )}
-      title={paid ? 'Payment confirmed.' : 'Waiting for payment confirmation.'}
-    >
+    <div className={cx('rounded-3xl border p-4', paid ? 'border-kiaro-lime/35 bg-kiaro-lime/[0.045]' : 'border-white/10 bg-white/[0.025]')}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-kiaro-muted">Slot {String(slot).padStart(2, '0')}</div>
-          <div className="mt-1 truncate font-display text-base font-black">{project.title}</div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-kiaro-muted">Delivery</div>
+          <h3 className="mt-1 truncate font-display text-xl font-black">{paid ? 'Unlocked' : 'Locked'}</h3>
         </div>
-        <ProjectStatusPill project={project} />
+        {paid ? <CheckCircle2 className="text-kiaro-lime" size={20} /> : <Lock className="text-kiaro-muted" size={20} />}
       </div>
 
-      {canSeeDeliverables ? (
-        <div className="mt-3 space-y-2">
+      <p className="mt-3 text-xs leading-5 text-kiaro-muted">
+        {paid ? 'Payment is confirmed. Final files appear here when Kiaro Studio uploads them.' : 'Final delivery is locked until Kiaro Studio confirms payment manually.'}
+      </p>
+
+      {paid || role === 'admin' ? (
+        <div className="mt-4 space-y-2">
           {finalFiles.length ? (
             finalFiles.map((file) => (
-              <div key={file.id} className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/20 p-2 text-xs">
+              <div key={file.id} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-xs">
                 <a href={projectFileDownloadUrl(file)} className="flex min-w-0 flex-1 items-center gap-2">
-                  <FileArchive size={14} className="shrink-0 text-kiaro-muted" />
+                  <FileArchive size={15} className="shrink-0 text-kiaro-muted" />
                   <span className="truncate">{file.file_name}</span>
                 </a>
                 <div className="flex shrink-0 items-center gap-2">
@@ -329,182 +426,26 @@ function PaidProjectCard({
               </div>
             ))
           ) : (
-            <div className="rounded-xl border border-dashed border-white/10 bg-black/15 p-3 text-center text-xs text-kiaro-muted">No final files uploaded yet.</div>
+            <div className="rounded-2xl border border-dashed border-white/10 bg-black/15 p-4 text-center text-xs text-kiaro-muted">No final files uploaded yet.</div>
           )}
         </div>
       ) : null}
 
       {role === 'admin' ? (
-        <div className="mt-3 grid gap-2 sm:grid-cols-3">
-          <button type="button" disabled={working} onClick={() => onActivate(project)} className="btn-ghost flex items-center justify-center gap-2 px-3 py-2 text-[11px] font-bold">
-            <CheckCircle2 size={14} /> Confirm paid
+        <div className="mt-4 grid gap-2">
+          <button type="button" disabled={working} onClick={() => onActivate(project)} className="btn-ghost flex items-center justify-center gap-2 px-3 py-3 text-xs font-bold">
+            <CheckCircle2 size={14} /> Confirm payment / unlock delivery
           </button>
-          <button type="button" disabled={working} onClick={() => onUploadFinal(project)} className="btn-ghost flex items-center justify-center gap-2 px-3 py-2 text-[11px] font-bold">
-            <UploadCloud size={14} /> Final files
+          <button type="button" disabled={working} onClick={() => onUploadFinal(project)} className="btn-ghost flex items-center justify-center gap-2 px-3 py-3 text-xs font-bold">
+            <UploadCloud size={14} /> Upload final files
           </button>
-          <button type="button" disabled={working} onClick={() => onClose(project)} className="btn-ghost flex items-center justify-center gap-2 border-red-300/20 px-3 py-2 text-[11px] font-bold text-red-100 hover:border-red-300/45">
-            <XCircle size={14} /> Close
+          <button type="button" disabled={working} onClick={() => onClose(project)} className="btn-ghost flex items-center justify-center gap-2 border-red-300/20 px-3 py-3 text-xs font-bold text-red-100 hover:border-red-300/45">
+            <XCircle size={14} /> Close case
           </button>
         </div>
       ) : null}
     </div>
   );
-}
-
-function PaidProjectsPanel({
-  role,
-  projects,
-  projectsBySlot,
-  expanded,
-  setExpanded,
-  onNewProject,
-  onActivate,
-  onClose,
-  onUploadFinal,
-  onDeleteFinal,
-  workingId
-}: {
-  role: 'customer' | 'admin';
-  projects: PaidProject[];
-  projectsBySlot: Record<number, PaidProject>;
-  expanded: boolean;
-  setExpanded: (expanded: boolean) => void;
-  onNewProject: () => void;
-  onActivate: (project: PaidProject) => void;
-  onClose: (project: PaidProject) => void;
-  onUploadFinal: (project: PaidProject) => void;
-  onDeleteFinal: (project: PaidProject, file: ProjectFinalFile) => void;
-  workingId?: string | null;
-}) {
-  const sortedProjects = [...projects].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-  const currentProject =
-    sortedProjects.find((project) => projectPaymentConfirmed(project) && project.status !== 'closed') ||
-    sortedProjects.find((project) => project.status !== 'closed') ||
-    sortedProjects[0];
-
-  return (
-    <div className="kiaro-card p-5">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="font-display text-xl font-black">Paid projects</h2>
-          <p className="mt-1 text-xs leading-5 text-kiaro-muted">Payment confirmation and final delivery files.</p>
-        </div>
-        {role === 'customer' ? (
-          <button type="button" onClick={onNewProject} className="btn-ghost grid h-9 w-9 place-items-center" title="New project">
-            <Plus size={16} />
-          </button>
-        ) : null}
-      </div>
-
-      <div className="mt-4">
-        {currentProject ? (
-          <CurrentProjectSummary project={currentProject} />
-        ) : role === 'customer' ? (
-          <button type="button" onClick={onNewProject} className="w-full rounded-3xl border border-dashed border-white/10 bg-white/[0.02] p-5 text-left transition hover:border-white/25">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="font-display text-lg font-black">Start a paid project</div>
-                <p className="mt-1 text-xs leading-5 text-kiaro-muted">Create a named project first. Kiaro Studio will send a payment link after the scope is clear.</p>
-              </div>
-              <FolderPlus size={18} className="text-kiaro-muted" />
-            </div>
-          </button>
-        ) : (
-          <div className="rounded-3xl border border-dashed border-white/10 bg-white/[0.02] p-5 text-sm text-kiaro-muted">No project has been requested yet.</div>
-        )}
-      </div>
-
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="btn-ghost mt-4 flex w-full items-center justify-between px-4 py-3 text-xs font-bold"
-      >
-        <span>{expanded ? 'Hide project slots' : 'Manage project slots'}</span>
-        <ChevronDown size={16} className={cx('transition', expanded && 'rotate-180')} />
-      </button>
-
-      {expanded ? (
-        <div className="mt-3 grid gap-2">
-          {Array.from({ length: PAID_PROJECT_SLOT_COUNT }, (_, index) => {
-            const slot = index + 1;
-            const project = projectsBySlot[slot];
-            return (
-              <PaidProjectCard
-                key={slot}
-                slot={slot}
-                project={project}
-                role={role}
-                onNewProject={onNewProject}
-                onActivate={onActivate}
-                onClose={onClose}
-                onUploadFinal={onUploadFinal}
-                onDeleteFinal={onDeleteFinal}
-                working={Boolean(workingId && project?.id === workingId)}
-              />
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function NewProjectModal({
-  title,
-  setTitle,
-  busy,
-  onCreate,
-  onClose
-}: {
-  title: string;
-  setTitle: (title: string) => void;
-  busy: boolean;
-  onCreate: () => void;
-  onClose: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 px-5 backdrop-blur-sm">
-      <div className="kiaro-card w-full max-w-lg p-6">
-        <h2 className="font-display text-3xl font-black">Start a project</h2>
-        <p className="mt-3 text-sm leading-6 text-kiaro-muted">
-          We will discuss the project details here. For now, give it a simple name such as the character name or Project 1. After the scope is clear, Kiaro Studio will send a price offer. Once payment is completed and manually confirmed, the delivery area for this project can be activated.
-        </p>
-        <input
-          className="glass-input mt-5 w-full px-4 py-4"
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') onCreate();
-          }}
-          placeholder="Project name, character name, or Project 1"
-        />
-        <div className="mt-4 flex gap-3">
-          <button className="btn-primary flex-1 px-5 py-3 text-sm" disabled={busy} onClick={onCreate}>
-            Create project
-          </button>
-          <button className="btn-ghost px-5 py-3 text-sm font-bold" onClick={onClose}>
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function getMessageDisplayName(sender: Message['sender'], viewerRole: 'customer' | 'admin') {
-  if (sender === 'system') return 'Update';
-  if (sender === viewerRole) return 'You';
-  if (sender === 'admin') return 'Kiaro Studio';
-  return 'Client';
-}
-
-function formatMessageTime(value: string) {
-  return new Date(value).toLocaleString([], {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
 }
 
 export function ConversationView({
@@ -520,8 +461,11 @@ export function ConversationView({
   adminSecret?: string | null;
   accessKeyBanner?: boolean;
 }) {
+  const [conversation, setConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [projects, setProjects] = useState<PaidProject[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [panelTab, setPanelTab] = useState<'references' | 'files' | 'delivery' | 'offer'>('references');
   const [body, setBody] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -539,7 +483,6 @@ export function ConversationView({
   const [offerScope, setOfferScope] = useState('Custom design/support work agreed in Kiaro Studio chat.');
   const [offerUrl, setOfferUrl] = useState('');
   const [projectModalOpen, setProjectModalOpen] = useState(false);
-  const [projectsExpanded, setProjectsExpanded] = useState(false);
   const [projectTitle, setProjectTitle] = useState('');
   const [creatingProject, setCreatingProject] = useState(false);
   const [finalUploadProject, setFinalUploadProject] = useState<PaidProject | null>(null);
@@ -573,13 +516,20 @@ export function ConversationView({
       setLoading(false);
       return undefined;
     }
+    return subscribeToConversation(conversationId, setConversation);
+  }, [accessOk, conversationId]);
+
+  useEffect(() => {
+    if (!accessOk) {
+      setLoading(false);
+      return undefined;
+    }
 
     setLoading(true);
     const unsubscribe = subscribeToMessages(conversationId, (nextMessages) => {
       setMessages(nextMessages);
       setLoading(false);
     });
-
     return () => unsubscribe();
   }, [accessOk, conversationId]);
 
@@ -589,9 +539,17 @@ export function ConversationView({
   }, [accessOk, conversationId]);
 
   useEffect(() => {
+    if (selectedProjectId && projects.some((project) => project.id === selectedProjectId)) return;
+    const sorted = [...projects].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+    const preferred = sorted.find((project) => project.status === 'active') || sorted.find((project) => project.status !== 'closed') || sorted[0];
+    setSelectedProjectId(preferred?.id || null);
+  }, [projects, selectedProjectId]);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length]);
 
+  const currentProject = useMemo(() => projects.find((project) => project.id === selectedProjectId) || null, [projects, selectedProjectId]);
   const attachments = useMemo(() => messages.map((message) => message.attachments).filter(Boolean) as Attachment[], [messages]);
   const imageAttachments = useMemo(() => attachments.filter((attachment) => attachment.kind === 'image' || attachment.kind === 'annotation'), [attachments]);
   const mainImages = useMemo(() => imageAttachments.filter((attachment) => !attachment.parent_attachment_id && attachment.kind === 'image'), [imageAttachments]);
@@ -606,13 +564,7 @@ export function ConversationView({
     return grouped;
   }, [imageAttachments]);
   const fileAttachments = useMemo(() => attachments.filter((attachment) => attachment.kind === 'file'), [attachments]);
-  const projectsBySlot = useMemo(() => {
-    const grouped: Record<number, PaidProject> = {};
-    projects.forEach((project) => {
-      grouped[project.slot] = project;
-    });
-    return grouped;
-  }, [projects]);
+  const workspaceTitle = currentProject?.title || conversation?.title || 'Commission workspace';
 
   function isSupportedUpload(file: File) {
     const extension = `.${file.name.split('.').pop()?.toLowerCase() || ''}`;
@@ -621,15 +573,11 @@ export function ConversationView({
 
   async function uploadFiles(files: FileList | File[]) {
     const nextFiles = Array.from(files).filter(isSupportedUpload);
-
     if (!nextFiles.length) {
       setError('Unsupported file type. Upload images, ZIP, STL, 3MF, OBJ, FBX or PDF files.');
       return;
     }
-
-    for (const file of nextFiles) {
-      await uploadFile(file);
-    }
+    for (const file of nextFiles) await uploadFile(file);
   }
 
   function filesFromDragEvent(event: DragEvent<HTMLElement>) {
@@ -653,7 +601,6 @@ export function ConversationView({
     event.preventDefault();
     event.stopPropagation();
     event.dataTransfer.dropEffect = 'copy';
-
     const files = filesFromDragEvent(event);
     setDragFileCount(files.length || event.dataTransfer.files.length || dragFileCount || 1);
     setDragRejected(files.length ? !files.some(isSupportedUpload) : false);
@@ -664,7 +611,6 @@ export function ConversationView({
     event.preventDefault();
     event.stopPropagation();
     dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-
     if (dragDepthRef.current === 0) {
       setDragActive(false);
       setDragRejected(false);
@@ -679,10 +625,7 @@ export function ConversationView({
     setDragActive(false);
     setDragRejected(false);
     setDragFileCount(0);
-
-    if (event.dataTransfer.files?.length) {
-      await uploadFiles(event.dataTransfer.files);
-    }
+    if (event.dataTransfer.files?.length) await uploadFiles(event.dataTransfer.files);
   }
 
   async function sendMessage() {
@@ -704,11 +647,33 @@ export function ConversationView({
     setError('');
     try {
       await uploadConversationFile(conversationId, role, file, overrideName, options);
+      if (file.type.startsWith('image/')) setPanelTab('references');
+      else setPanelTab('files');
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Upload failed.';
-      setError(message);
+      setError(err instanceof Error ? err.message : 'Upload failed.');
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function createProject() {
+    const cleanTitle = projectTitle.trim();
+    if (!cleanTitle) {
+      setError('Please enter a project name.');
+      return;
+    }
+    setCreatingProject(true);
+    setError('');
+    try {
+      const id = await createPaidProjectRequest(conversationId, cleanTitle, role);
+      setSelectedProjectId(id);
+      setProjectTitle('');
+      setProjectModalOpen(false);
+      setPanelTab('references');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Project could not be created.');
+    } finally {
+      setCreatingProject(false);
     }
   }
 
@@ -719,6 +684,7 @@ export function ConversationView({
     setError('');
     try {
       await sendOfferMessage(conversationId, { amount, currency: 'USD', scope: offerScope, paymentUrl: offerUrl.trim() });
+      if (currentProject) await updatePaidProjectStatus(conversationId, currentProject.id, 'offer_sent');
       setOfferUrl('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Offer failed.');
@@ -729,45 +695,9 @@ export function ConversationView({
     setError('');
     try {
       await markOfferPaid(conversationId, offerId);
+      if (currentProject) await updatePaidProjectStatus(conversationId, currentProject.id, 'active');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Mark paid failed.');
-    }
-  }
-
-  async function deleteAttachment(attachment: Attachment, includeBranches = true) {
-    if (role !== 'admin') return;
-    const branchText = includeBranches ? ' This will also delete its branches/variations.' : '';
-    const confirmed = window.confirm(`Permanently delete ${attachment.file_name}?${branchText} This removes the UploadThing file and the chat record.`);
-    if (!confirmed) return;
-
-    setDeletingId(attachment.id);
-    setError('');
-    try {
-      await deleteAttachmentPermanently(conversationId, attachment, adminSecret || '', includeBranches);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Permanent delete failed.');
-    } finally {
-      setDeletingId(null);
-    }
-  }
-
-  async function createProject() {
-    const cleanTitle = projectTitle.trim();
-    if (!cleanTitle) {
-      setError('Please enter a project name.');
-      return;
-    }
-
-    setCreatingProject(true);
-    setError('');
-    try {
-      await createPaidProjectRequest(conversationId, cleanTitle, role);
-      setProjectTitle('');
-      setProjectModalOpen(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Project could not be created.');
-    } finally {
-      setCreatingProject(false);
     }
   }
 
@@ -777,6 +707,7 @@ export function ConversationView({
     setError('');
     try {
       await updatePaidProjectStatus(conversationId, project.id, 'active');
+      setPanelTab('delivery');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not activate project.');
     } finally {
@@ -786,9 +717,8 @@ export function ConversationView({
 
   async function closeProject(project: PaidProject) {
     if (role !== 'admin') return;
-    const confirmed = window.confirm(`Close case for ${project.title}? The project card will stay visible for final downloads.`);
+    const confirmed = window.confirm(`Close case for ${project.title}? Final files will remain visible unless removed.`);
     if (!confirmed) return;
-
     setProjectWorkingId(project.id);
     setError('');
     try {
@@ -810,9 +740,8 @@ export function ConversationView({
     setProjectWorkingId(finalUploadProject.id);
     setError('');
     try {
-      for (const file of Array.from(files)) {
-        await uploadPaidProjectFinalFile(conversationId, finalUploadProject, file, role);
-      }
+      for (const file of Array.from(files)) await uploadPaidProjectFinalFile(conversationId, finalUploadProject, file, role);
+      setPanelTab('delivery');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Final file upload failed.');
     } finally {
@@ -821,11 +750,26 @@ export function ConversationView({
     }
   }
 
+  async function deleteAttachment(attachment: Attachment, includeBranches = true) {
+    if (role !== 'admin') return;
+    const branchText = includeBranches ? ' This will also delete its branches/variations.' : '';
+    const confirmed = window.confirm(`Permanently delete ${attachment.file_name}?${branchText}`);
+    if (!confirmed) return;
+    setDeletingId(attachment.id);
+    setError('');
+    try {
+      await deleteAttachmentPermanently(conversationId, attachment, adminSecret || '', includeBranches);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Permanent delete failed.');
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   async function deleteFinalFile(project: PaidProject, file: ProjectFinalFile) {
     if (role !== 'admin') return;
     const confirmed = window.confirm(`Permanently delete final file ${file.file_name}?`);
     if (!confirmed) return;
-
     setProjectWorkingId(project.id);
     setError('');
     try {
@@ -847,14 +791,7 @@ export function ConversationView({
       kind: 'annotation',
       messageBody: role === 'admin' ? 'Marked-up image added by Kiaro Studio.' : 'Marked-up image added.'
     });
-
-    if (source) {
-      await saveAnnotationRecord(conversationId, {
-        sourceAttachmentId: source.id,
-        strokes,
-        createdBy: role
-      });
-    }
+    if (source) await saveAnnotationRecord(conversationId, { sourceAttachmentId: source.id, strokes, createdBy: role });
   }
 
   function addVariation(parent: Attachment) {
@@ -866,13 +803,26 @@ export function ConversationView({
     return (
       <div className="kiaro-card p-8">
         <h1 className="font-display text-3xl font-black">Access needed</h1>
-        <p className="mt-3 text-sm leading-6 text-kiaro-muted">This conversation requires a valid access key or admin access.</p>
+        <p className="mt-3 text-sm leading-6 text-kiaro-muted">This workspace requires a valid access key or admin access.</p>
       </div>
     );
   }
 
+  const panelTabs: Array<{ id: typeof panelTab; label: string }> = role === 'admin'
+    ? [
+        { id: 'references', label: 'References' },
+        { id: 'files', label: 'Files' },
+        { id: 'delivery', label: 'Delivery' },
+        { id: 'offer', label: 'Offer' }
+      ]
+    : [
+        { id: 'references', label: 'References' },
+        { id: 'files', label: 'Files' },
+        { id: 'delivery', label: 'Delivery' }
+      ];
+
   return (
-    <div className="grid min-h-[72vh] gap-5 lg:grid-cols-[1fr_340px]">
+    <div className="grid min-h-[72vh] gap-5 xl:grid-cols-[minmax(0,1fr)_390px]">
       <section
         className={cx('kiaro-card relative flex min-h-[72vh] flex-col overflow-hidden', dragActive && 'drag-upload-active')}
         onDragEnter={handleDragEnter}
@@ -886,40 +836,45 @@ export function ConversationView({
               <UploadCloud size={34} />
               <div className="mt-4 font-display text-2xl font-black">Drop to upload</div>
               <p className="mt-2 text-sm text-kiaro-muted">
-                {dragRejected
-                  ? 'This file type is not supported.'
-                  : dragFileCount > 1
-                    ? `${dragFileCount} files will be attached to this conversation.`
-                    : 'Images, ZIP, STL, 3MF, OBJ, FBX and PDF files are supported.'}
+                {dragRejected ? 'This file type is not supported.' : dragFileCount > 1 ? `${dragFileCount} files will be attached to this workspace.` : 'Images, ZIP, STL, 3MF, OBJ, FBX and PDF files are supported.'}
               </p>
             </div>
           </div>
         ) : null}
 
         <div className="border-b border-white/10 p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h1 className="font-display text-2xl font-black">Conversation</h1>
-              <p className="mt-1 text-sm text-kiaro-muted">Upload references, project files and visual notes.</p>
-            </div>
-            {accessKeyBanner && accessKey ? (
-              <div className="rounded-2xl border border-kiaro-neon/20 bg-kiaro-neon/5 px-4 py-3 text-right">
-                <div className="text-[10px] uppercase tracking-[0.26em] text-kiaro-muted">Guest access key</div>
-                <div className="font-display text-lg font-black text-kiaro-neon">{accessKey}</div>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-kiaro-muted">Project conversation</div>
+              <h1 className="mt-1 truncate font-display text-3xl font-black">{workspaceTitle}</h1>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <StatusPill status={currentProject?.status} />
+                <span className="text-xs text-kiaro-muted">{statusCopy(currentProject?.status).description}</span>
               </div>
-            ) : null}
+            </div>
+            <div className="flex items-center gap-2">
+              {accessKeyBanner && accessKey ? (
+                <div className="rounded-2xl border border-white/12 bg-white/[0.035] px-4 py-3 text-right" title="Save this key to continue this guest workspace later.">
+                  <div className="text-[10px] uppercase tracking-[0.24em] text-kiaro-muted">Guest key</div>
+                  <div className="font-display text-base font-black text-kiaro-text">{accessKey}</div>
+                </div>
+              ) : null}
+              <button type="button" onClick={() => setProjectModalOpen(true)} className="btn-primary px-5 py-3 text-xs font-black">
+                New project
+              </button>
+            </div>
           </div>
           {error ? <div className="mt-4 rounded-2xl border border-red-400/25 bg-red-500/10 p-4 text-sm text-red-100">{error}</div> : null}
         </div>
 
         <div className="flex-1 overflow-y-auto p-5">
-          {loading ? <p className="text-kiaro-muted">Loading conversation…</p> : null}
+          {loading ? <p className="text-kiaro-muted">Loading workspace…</p> : null}
           <div className="space-y-4">
             {messages.map((message) => {
               const mine = message.sender === role;
               return (
                 <div key={message.id} className={cx('flex', mine ? 'justify-end' : 'justify-start')}>
-                  <div className={cx('max-w-[82%] rounded-3xl border p-4', mine ? 'border-kiaro-neon/25 bg-kiaro-neon/10' : 'border-white/10 bg-white/[0.045]')}>
+                  <div className={cx('max-w-[82%] rounded-3xl border p-4', mine ? 'border-white/16 bg-white/[0.075]' : 'border-white/10 bg-white/[0.04]')}>
                     <div className="mb-2 flex items-center gap-2 text-[11px] font-medium tracking-[0.03em] text-kiaro-muted/85">
                       <span>{getMessageDisplayName(message.sender, role)}</span>
                       <span className="h-1 w-1 rounded-full bg-white/25" />
@@ -941,7 +896,7 @@ export function ConversationView({
 
         <div className="border-t border-white/10 p-4">
           <div className="flex gap-3">
-            <label className="btn-ghost grid h-12 w-12 shrink-0 cursor-pointer place-items-center">
+            <label className="btn-ghost grid h-12 w-12 shrink-0 cursor-pointer place-items-center" title="Upload files">
               <UploadCloud size={20} />
               <input
                 type="file"
@@ -971,90 +926,68 @@ export function ConversationView({
               <Send size={18} />
             </button>
           </div>
-          <div className="mt-2 text-xs text-kiaro-muted">{deletingId ? 'Permanently deleting file…' : uploading ? 'Uploading file…' : 'Supports images, ZIP, STL, 3MF and PDF files.'}</div>
+          <div className="mt-2 text-xs text-kiaro-muted">{deletingId ? 'Permanently deleting file…' : uploading ? 'Uploading file…' : 'Drag images, ZIP, STL, 3MF, OBJ, FBX or PDF files into the conversation.'}</div>
         </div>
       </section>
 
       <aside className="space-y-5">
-        <div className="kiaro-card p-5">
-          <h2 className="font-display text-xl font-black">Image library</h2>
-          <div className="mt-4 grid gap-3">
-            {mainImages.length ? (
-              mainImages.map((attachment) => (
-                <ImageLibraryCard
-                  key={attachment.id}
-                  attachment={attachment}
-                  variants={imageVariantsByParent[attachment.id] || []}
-                  onAnnotate={setAnnotating}
-                  onAddVariation={addVariation}
-                  onDelete={role === 'admin' ? deleteAttachment : undefined}
-                />
-              ))
-            ) : (
-              <EmptyLibraryCard icon={Images} label="No images yet" />
-            )}
-          </div>
-        </div>
-
-        <div className="kiaro-card p-5">
-          <h2 className="font-display text-xl font-black">File library</h2>
-          <div className="mt-4 grid gap-3">
-            {fileAttachments.length ? (
-              fileAttachments.map((attachment) => (
-                <div key={attachment.id} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.035] p-4 text-sm kiaro-hover">
-                  <a href={attachmentDownloadUrl(attachment)} className="flex min-w-0 flex-1 items-center gap-3">
-                    <FileArchive size={18} className="shrink-0 text-kiaro-neon" />
-                    <span className="truncate">{attachment.file_name}</span>
-                  </a>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <a href={attachmentDownloadUrl(attachment)} className="text-xs text-kiaro-muted hover:text-kiaro-text">Download</a>
-                    {role === 'admin' ? (
-                      <button
-                        type="button"
-                        onClick={() => deleteAttachment(attachment, false)}
-                        disabled={deletingId === attachment.id}
-                        title="Permanently delete this file"
-                        className="grid h-8 w-8 place-items-center rounded-full border border-red-300/20 text-red-100 transition hover:border-red-300/45 disabled:opacity-40"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              ))
-            ) : (
-              <EmptyLibraryCard icon={FileArchive} label="No files yet" />
-            )}
-          </div>
-        </div>
-
-        {role === 'admin' ? (
-          <div className="kiaro-card p-5">
-            <h2 className="font-display text-xl font-black">Send payment link</h2>
-            <p className="mt-2 text-sm leading-6 text-kiaro-muted">Paste a Ko-fi or custom payment link. You can send a deposit first and a final payment link later.</p>
-            <div className="mt-4 space-y-3">
-              <input className="glass-input w-full px-4 py-3" value={offerAmount} onChange={(e) => setOfferAmount(e.target.value)} placeholder="Amount" />
-              <textarea className="glass-input min-h-24 w-full px-4 py-3" value={offerScope} onChange={(e) => setOfferScope(e.target.value)} placeholder="Scope" />
-              <input className="glass-input w-full px-4 py-3" value={offerUrl} onChange={(e) => setOfferUrl(e.target.value)} placeholder="Ko-fi or payment link" />
-              <button className="btn-primary w-full px-5 py-3 text-sm" onClick={sendOffer}>Send custom offer</button>
-            </div>
-          </div>
-        ) : null}
-
-        <PaidProjectsPanel
-          role={role}
+        <ProjectSwitcher
           projects={projects}
-          projectsBySlot={projectsBySlot}
-          expanded={projectsExpanded}
-          setExpanded={setProjectsExpanded}
+          currentProject={currentProject}
+          selectedProjectId={selectedProjectId}
+          setSelectedProjectId={setSelectedProjectId}
           onNewProject={() => setProjectModalOpen(true)}
-          onActivate={activateProject}
-          onClose={closeProject}
-          onUploadFinal={openFinalUpload}
-          onDeleteFinal={deleteFinalFile}
-          workingId={projectWorkingId}
+          role={role}
         />
 
+        <div className="kiaro-card p-5">
+          <div className="grid grid-cols-3 gap-2">
+            {panelTabs.map((tab) => (
+              <button
+                type="button"
+                key={tab.id}
+                onClick={() => setPanelTab(tab.id)}
+                className={cx('rounded-full border px-3 py-2 text-[11px] font-black uppercase tracking-[0.12em] transition', panelTab === tab.id ? 'border-white/70 bg-white text-black' : 'border-white/10 bg-white/[0.025] text-kiaro-muted hover:border-white/24 hover:text-kiaro-text')}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-5">
+            {panelTab === 'references' ? (
+              <ReferencesPanel mainImages={mainImages} variantsByParent={imageVariantsByParent} onAnnotate={setAnnotating} onAddVariation={addVariation} onDelete={deleteAttachment} role={role} />
+            ) : null}
+
+            {panelTab === 'files' ? <FilesPanel fileAttachments={fileAttachments} onDelete={deleteAttachment} deletingId={deletingId} role={role} /> : null}
+
+            {panelTab === 'delivery' ? (
+              <DeliveryPanel
+                role={role}
+                project={currentProject}
+                onActivate={activateProject}
+                onClose={closeProject}
+                onUploadFinal={openFinalUpload}
+                onDeleteFinal={deleteFinalFile}
+                working={Boolean(projectWorkingId && currentProject?.id === projectWorkingId)}
+              />
+            ) : null}
+
+            {panelTab === 'offer' && role === 'admin' ? (
+              <div>
+                <h2 className="font-display text-xl font-black">Send payment offer</h2>
+                <p className="mt-2 text-sm leading-6 text-kiaro-muted">Paste a Ko-fi or custom payment link. Sending an offer will mark the selected project as waiting for payment.</p>
+                {!currentProject ? <div className="mt-4 rounded-2xl border border-amber-200/20 bg-amber-300/10 p-4 text-xs text-amber-100">Create or select a project before sending a payment offer.</div> : null}
+                <div className="mt-4 space-y-3">
+                  <input className="glass-input w-full px-4 py-3" value={offerAmount} onChange={(e) => setOfferAmount(e.target.value)} placeholder="Amount" />
+                  <textarea className="glass-input min-h-24 w-full px-4 py-3" value={offerScope} onChange={(e) => setOfferScope(e.target.value)} placeholder="Scope" />
+                  <input className="glass-input w-full px-4 py-3" value={offerUrl} onChange={(e) => setOfferUrl(e.target.value)} placeholder="Ko-fi or payment link" />
+                  <button className="btn-primary w-full px-5 py-3 text-sm" disabled={!currentProject} onClick={sendOffer}>Send custom offer</button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
       </aside>
 
       <input
@@ -1088,24 +1021,9 @@ export function ConversationView({
         }}
       />
 
-      {annotating?.signed_url ? (
-        <AnnotationModal
-          imageUrl={annotating.signed_url}
-          fileName={annotating.file_name}
-          onClose={() => setAnnotating(null)}
-          onSave={saveAnnotation}
-        />
-      ) : null}
+      {annotating?.signed_url ? <AnnotationModal imageUrl={annotating.signed_url} fileName={annotating.file_name} onClose={() => setAnnotating(null)} onSave={saveAnnotation} /> : null}
 
-      {projectModalOpen ? (
-        <NewProjectModal
-          title={projectTitle}
-          setTitle={setProjectTitle}
-          busy={creatingProject}
-          onCreate={createProject}
-          onClose={() => setProjectModalOpen(false)}
-        />
-      ) : null}
+      {projectModalOpen ? <NewProjectModal title={projectTitle} setTitle={setProjectTitle} busy={creatingProject} onCreate={createProject} onClose={() => setProjectModalOpen(false)} /> : null}
     </div>
   );
 }

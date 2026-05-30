@@ -25,15 +25,15 @@ import { GoogleAuthProvider, onAuthStateChanged, signInAnonymously, signInWithPo
 import { uploadFiles as uploadThingFiles } from '@/utils/uploadthing';
 
 export const defaultHomeConfig: HomeInterfaceConfig = {
-  eyebrow: 'Private commission portal',
-  title: 'Commission requests, references and project files for Kiaro Studio.',
+  eyebrow: 'Kiaro Studio commissions',
+  title: 'Start a private commission workspace.',
   subtitle:
-    'Use Google sign-in for a persistent project thread, or continue without registration and save your access key so you do not lose the conversation.',
+    'Discuss your project, share references, receive custom payment offers, and download final files in one clean workspace.',
   googleButton: 'Sign in with Google',
   guestButton: 'Continue without registration',
-  guestTitle: 'Choose a username',
-  guestHelper: 'This name will appear in the conversation so Kiaro Studio can identify your request.',
-  accessHelper: 'Already have an access key? Resume an existing guest conversation.'
+  guestTitle: 'Choose a display name',
+  guestHelper: 'This name helps Kiaro Studio identify your request inside the workspace.',
+  accessHelper: 'Resume an existing guest workspace with your saved access key.'
 };
 
 function nowIso() {
