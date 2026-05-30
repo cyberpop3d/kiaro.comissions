@@ -5,7 +5,7 @@ import { OfferCard } from '@/components/OfferCard';
 import { markOfferPaid, saveAnnotationRecord, sendOfferMessage, sendTextMessage, subscribeToMessages, uploadConversationFile, verifyAccess } from '@/lib/firebase/data';
 import type { Attachment, Message } from '@/lib/types';
 import { FileArchive, Image as ImageIcon, Images, Paperclip, Plus, Send, UploadCloud, Wand2, type LucideIcon } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type DragEvent, useEffect, useMemo, useRef, useState } from 'react';
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(' ');
@@ -127,11 +127,15 @@ export function ConversationView({
   const [accessOk, setAccessOk] = useState(role === 'admin');
   const [annotating, setAnnotating] = useState<Attachment | null>(null);
   const [variationParent, setVariationParent] = useState<Attachment | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [dragRejected, setDragRejected] = useState(false);
+  const [dragFileCount, setDragFileCount] = useState(0);
   const [offerAmount, setOfferAmount] = useState('35');
   const [offerScope, setOfferScope] = useState('Custom design/support work agreed in Kiaro Studio chat.');
   const [offerUrl, setOfferUrl] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const variationInputRef = useRef<HTMLInputElement | null>(null);
+  const dragDepthRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -186,6 +190,78 @@ export function ConversationView({
     return grouped;
   }, [imageAttachments]);
   const fileAttachments = useMemo(() => attachments.filter((attachment) => attachment.kind === 'file'), [attachments]);
+
+  function isSupportedUpload(file: File) {
+    const extension = `.${file.name.split('.').pop()?.toLowerCase() || ''}`;
+    return file.type.startsWith('image/') || ['.zip', '.stl', '.3mf', '.obj', '.fbx', '.pdf'].includes(extension);
+  }
+
+  async function uploadFiles(files: FileList | File[]) {
+    const nextFiles = Array.from(files).filter(isSupportedUpload);
+
+    if (!nextFiles.length) {
+      setError('Unsupported file type. Please upload images, ZIP, STL, 3MF, OBJ, FBX or PDF files.');
+      return;
+    }
+
+    for (const file of nextFiles) {
+      // Upload sequentially to avoid overloading Firebase Storage and to keep chat order readable.
+      await uploadFile(file);
+    }
+  }
+
+  function filesFromDragEvent(event: DragEvent<HTMLElement>) {
+    return Array.from(event.dataTransfer.items || [])
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file));
+  }
+
+  function handleDragEnter(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepthRef.current += 1;
+    const files = filesFromDragEvent(event);
+    setDragFileCount(files.length || event.dataTransfer.files.length || 1);
+    setDragRejected(files.length ? !files.some(isSupportedUpload) : false);
+    setDragActive(true);
+  }
+
+  function handleDragOver(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'copy';
+
+    const files = filesFromDragEvent(event);
+    setDragFileCount(files.length || event.dataTransfer.files.length || dragFileCount || 1);
+    setDragRejected(files.length ? !files.some(isSupportedUpload) : false);
+    setDragActive(true);
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+
+    if (dragDepthRef.current === 0) {
+      setDragActive(false);
+      setDragRejected(false);
+      setDragFileCount(0);
+    }
+  }
+
+  async function handleDrop(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepthRef.current = 0;
+    setDragActive(false);
+    setDragRejected(false);
+    setDragFileCount(0);
+
+    if (event.dataTransfer.files?.length) {
+      await uploadFiles(event.dataTransfer.files);
+    }
+  }
 
   async function sendMessage() {
     if (!body.trim()) return;
@@ -272,7 +348,29 @@ export function ConversationView({
 
   return (
     <div className="grid min-h-[72vh] gap-5 lg:grid-cols-[1fr_340px]">
-      <section className="kiaro-card flex min-h-[72vh] flex-col overflow-hidden">
+      <section
+        className={cx('kiaro-card relative flex min-h-[72vh] flex-col overflow-hidden', dragActive && 'drag-upload-active')}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {dragActive ? (
+          <div className={cx('drag-upload-overlay', dragRejected && 'drag-upload-overlay-rejected')}>
+            <div className="drag-upload-panel">
+              <UploadCloud size={34} />
+              <div className="mt-4 font-display text-2xl font-black">Drop to upload</div>
+              <p className="mt-2 text-sm text-kiaro-muted">
+                {dragRejected
+                  ? 'This file type is not supported.'
+                  : dragFileCount > 1
+                    ? `${dragFileCount} files will be attached to this conversation.`
+                    : 'Images, ZIP, STL, 3MF, OBJ, FBX and PDF files are supported.'}
+              </p>
+            </div>
+          </div>
+        ) : null}
+
         <div className="border-b border-white/10 p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -320,11 +418,12 @@ export function ConversationView({
               <UploadCloud size={20} />
               <input
                 type="file"
+                multiple
                 className="hidden"
                 accept="image/*,.zip,.stl,.3mf,.obj,.fbx,.pdf"
                 onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) uploadFile(file);
+                  const files = e.target.files;
+                  if (files?.length) uploadFiles(files);
                   e.currentTarget.value = '';
                 }}
               />
