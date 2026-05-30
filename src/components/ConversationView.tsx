@@ -63,27 +63,40 @@ function ImageLibraryCard({
   onAnnotate: (attachment: Attachment) => void;
   onAddVariation: (attachment: Attachment) => void;
 }) {
+  const previewVariants = variants.slice(0, 4);
+
   return (
-    <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-3">
-      <button type="button" onClick={() => onAnnotate(attachment)} className="block w-full overflow-hidden rounded-2xl bg-black/25">
+    <div className="image-library-card p-3">
+      <button type="button" onClick={() => onAnnotate(attachment)} className="relative block w-full overflow-hidden rounded-[16px] bg-black/25">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={attachment.signed_url || ''} alt={attachment.file_name} className="h-36 w-full object-cover" />
+        <img src={attachment.signed_url || ''} alt={attachment.file_name} className="h-36 w-full object-cover transition duration-300 hover:scale-[1.025]" />
+        {previewVariants.length ? (
+          <div className="branch-preview-overlay">
+            <div className="branch-preview-strip">
+              {previewVariants.map((variant) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img key={variant.id} src={variant.signed_url || ''} alt={variant.file_name} className="branch-preview-thumb" />
+              ))}
+            </div>
+            <div className="branch-preview-label">{variants.length} branch{variants.length > 1 ? 'es' : ''}</div>
+          </div>
+        ) : null}
       </button>
-      <div className="mt-3 min-w-0 text-sm font-bold text-kiaro-text/90">{attachment.file_name}</div>
+      <div className="mt-3 min-w-0 truncate text-sm font-semibold text-kiaro-text/90">{attachment.file_name}</div>
       <div className="mt-3 flex gap-2">
         <button type="button" onClick={() => onAnnotate(attachment)} className="btn-ghost flex flex-1 items-center justify-center gap-2 px-3 py-2 text-xs font-bold">
           <Wand2 size={14} /> Edit
         </button>
-        <button type="button" onClick={() => onAddVariation(attachment)} className="btn-ghost grid h-9 w-10 place-items-center">
+        <button type="button" onClick={() => onAddVariation(attachment)} title="Add variation to this image" className="btn-ghost grid h-9 w-10 place-items-center">
           <Plus size={16} />
         </button>
       </div>
       {variants.length ? (
         <div className="mt-3 grid grid-cols-3 gap-2">
           {variants.map((variant) => (
-            <button key={variant.id} type="button" onClick={() => onAnnotate(variant)} className="overflow-hidden rounded-xl border border-white/10 bg-black/25">
+            <button key={variant.id} type="button" onClick={() => onAnnotate(variant)} className="overflow-hidden rounded-xl border border-white/10 bg-black/25 transition hover:border-white/30 hover:opacity-100">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={variant.signed_url || ''} alt={variant.file_name} className="h-16 w-full object-cover opacity-85" />
+              <img src={variant.signed_url || ''} alt={variant.file_name} className="h-16 w-full object-cover opacity-80" />
             </button>
           ))}
         </div>

@@ -5,24 +5,24 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        display: ['var(--font-display)', 'Orbitron', 'Rajdhani', 'system-ui', 'sans-serif'],
+        display: ['var(--font-display)', 'Inter Tight', 'Arial Narrow', 'system-ui', 'sans-serif'],
         body: ['var(--font-body)', 'Inter', 'system-ui', 'sans-serif']
       },
       colors: {
         kiaro: {
-          bg: '#07090f',
-          panel: '#10131d',
-          panel2: '#151a27',
-          line: '#232b3d',
-          text: '#eef3ff',
-          muted: '#8c98ad',
-          neon: '#79f2ff',
-          pink: '#ff4fd8',
-          lime: '#b8ff64'
+          bg: '#070908',
+          panel: '#111514',
+          panel2: '#171b1a',
+          line: '#2a2e2d',
+          text: '#f3f4ef',
+          muted: '#8d948d',
+          neon: '#f4f3ec',
+          pink: '#e8e4d7',
+          lime: '#d8f0a0'
         }
       },
       boxShadow: {
-        glow: '0 0 34px rgba(121, 242, 255, 0.18)',
+        glow: '0 0 34px rgba(244, 243, 236, 0.10)',
         soft: '0 18px 80px rgba(0,0,0,0.35)'
       }
     }
