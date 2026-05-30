@@ -92,7 +92,7 @@ export default function ChatPage() {
   if (checkingAccess) return null;
 
   return (
-    <main className="min-h-screen pb-10">
+    <main className="h-screen overflow-hidden">
       <TopNav
         right={
           <button type="button" onClick={() => setUsernameOpen(true)} className="btn-ghost inline-flex items-center gap-2 px-5 py-3 text-sm font-bold">
@@ -100,7 +100,7 @@ export default function ChatPage() {
           </button>
         }
       />
-      <div className="mx-auto max-w-7xl px-5">
+      <div className="mx-auto h-[calc(100vh-104px)] max-w-7xl overflow-hidden px-5 pb-5">
         <ConversationView conversationId={params.id} role="customer" accessKey={accessKey} accessKeyBanner={conversation?.auth_mode === 'guest' && Boolean(accessKey)} />
       </div>
 

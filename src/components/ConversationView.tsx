@@ -195,15 +195,23 @@ function ImageLibraryCard({
   );
 }
 
-function getMessageDisplayName(sender: Message['sender'], viewerRole: 'customer' | 'admin') {
+function getMessageDisplayName(sender: Message['sender'], viewerRole: 'customer' | 'admin', customerName?: string | null) {
   if (sender === 'system') return 'Update';
-  if (sender === viewerRole) return 'You';
-  if (sender === 'admin') return 'Kiaro Studio';
-  return 'Client';
+  if (sender === 'admin') return viewerRole === 'admin' ? 'You' : 'Kiaro Studio';
+  if (sender === 'customer') return viewerRole === 'customer' ? 'You' : customerName?.trim() || 'Client';
+  return 'Update';
 }
 
 function formatMessageTime(value: string) {
   return new Date(value).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function getMessageBody(message: Message) {
+  if (message.type === 'attachment') return 'File attached.';
+  if (!message.body) return '';
+  if (/customer uploaded a file/i.test(message.body)) return 'File attached.';
+  if (/kiaro studio uploaded a file/i.test(message.body)) return 'File attached.';
+  return message.body;
 }
 
 function NewProjectModal({ title, setTitle, busy, onCreate, onClose }: { title: string; setTitle: (title: string) => void; busy: boolean; onCreate: () => void; onClose: () => void }) {
@@ -294,7 +302,7 @@ function ProjectSwitcher({
 
       {role === 'admin' && !projects.length ? (
         <div className="mt-4 rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-4 text-xs leading-5 text-kiaro-muted">
-          The customer has not opened a project yet. You can still chat and ask them to create one when the scope is ready.
+          This client has not opened a project yet. You can still chat and ask them to create one when the scope is ready.
         </div>
       ) : null}
     </div>
@@ -827,9 +835,9 @@ export function ConversationView({
       ];
 
   return (
-    <div className="grid min-h-[72vh] gap-5 xl:grid-cols-[minmax(0,1fr)_390px]">
+    <div className="grid h-full min-h-0 gap-5 overflow-hidden xl:grid-cols-[minmax(0,1fr)_390px]">
       <section
-        className={cx('kiaro-card relative flex min-h-[72vh] flex-col overflow-hidden', dragActive && 'drag-upload-active')}
+        className={cx('kiaro-card relative flex h-full min-h-0 flex-col overflow-hidden', dragActive && 'drag-upload-active')}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -872,23 +880,24 @@ export function ConversationView({
           {error ? <div className="mt-4 rounded-2xl border border-red-400/25 bg-red-500/10 p-4 text-sm text-red-100">{error}</div> : null}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
           {loading ? <p className="text-kiaro-muted">Loading workspace…</p> : null}
           <div className="space-y-4">
             {messages.map((message) => {
               const mine = message.sender === role;
+              const displayBody = getMessageBody(message);
               return (
                 <div key={message.id} className={cx('flex', mine ? 'justify-end' : 'justify-start')}>
                   <div className={cx('max-w-[82%] rounded-3xl border p-4', mine ? 'border-white/16 bg-white/[0.075]' : 'border-white/10 bg-white/[0.04]')}>
                     <div className="mb-2 flex items-center gap-2 text-[11px] font-medium tracking-[0.03em] text-kiaro-muted/85">
-                      <span>{getMessageDisplayName(message.sender, role)}</span>
+                      <span>{getMessageDisplayName(message.sender, role, conversation?.guest_sessions?.name)}</span>
                       <span className="h-1 w-1 rounded-full bg-white/25" />
                       <span>{formatMessageTime(message.created_at)}</span>
                     </div>
                     {message.type === 'offer' && message.offers ? (
                       <OfferCard offer={message.offers} admin={role === 'admin'} onPaid={() => markPaid(message.offers!.id)} />
-                    ) : message.body ? (
-                      <p className="whitespace-pre-wrap text-sm leading-6 text-kiaro-text/90">{message.body}</p>
+                    ) : displayBody ? (
+                      <p className="whitespace-pre-wrap text-sm leading-6 text-kiaro-text/90">{displayBody}</p>
                     ) : null}
                     {message.attachments ? <AttachmentPreview attachment={message.attachments} onAnnotate={setAnnotating} /> : null}
                   </div>
@@ -935,7 +944,7 @@ export function ConversationView({
         </div>
       </section>
 
-      <aside className="space-y-5">
+      <aside className="min-h-0 space-y-5 overflow-y-auto pr-1">
         <ProjectSwitcher
           projects={projects}
           currentProject={currentProject}

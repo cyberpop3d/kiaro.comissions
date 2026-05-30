@@ -136,7 +136,7 @@ async function createConversationForUser(user: User, input: { name?: string | nu
 
   const safeName = safeNameValue(input.name);
   const safeEmail = safeEmailValue(input.email);
-  const title = safeName ? `${safeName} · Custom request` : isGoogleConversation ? 'Google customer · Custom request' : 'Guest custom request';
+  const title = safeName ? `${safeName} · Custom request` : isGoogleConversation ? 'Google account · Custom request' : 'Guest custom request';
 
   const conversationRef = await addDoc(collection(db, 'conversations'), {
     title,
@@ -479,7 +479,7 @@ export async function uploadConversationFile(
     conversation_id: conversationId,
     sender,
     type: 'attachment',
-    body: options?.messageBody || (sender === 'admin' ? 'Kiaro Studio uploaded a file.' : 'Customer uploaded a file.'),
+    body: options?.messageBody || 'File uploaded.',
     attachment,
     created_at: serverTimestamp()
   });

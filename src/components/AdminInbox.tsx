@@ -230,7 +230,7 @@ export function AdminInbox() {
               <Link key={conversation.id} href={`/admin/${conversation.id}`} className="kiaro-card kiaro-hover block p-5">
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div>
-                    <div className="font-display text-xl font-black">{guest?.name || 'Customer'}</div>
+                    <div className="font-display text-xl font-black">{guest?.name || 'Unnamed client'}</div>
                     <div className="mt-1 text-sm text-kiaro-muted">{guest?.email || 'No email'} · {guest?.access_key || 'No key'}</div>
                   </div>
                   <div className="text-right">
