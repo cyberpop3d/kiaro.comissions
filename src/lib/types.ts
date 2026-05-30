@@ -8,7 +8,8 @@ export type ConversationStatus =
   | 'offer_sent'
   | 'paid'
   | 'delivered'
-  | 'closed';
+  | 'closed'
+  | 'archived';
 
 export type Conversation = {
   id: string;

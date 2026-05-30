@@ -16,6 +16,7 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
+  writeBatch,
   where,
   type DocumentData,
   type QueryDocumentSnapshot,
@@ -378,6 +379,57 @@ export function subscribeToConversations(callback: (conversations: Conversation[
   return onSnapshot(q, (snapshot) => {
     callback(snapshot.docs.map(mapConversation));
   });
+}
+
+
+
+function isConversationStatus(value: unknown): value is Conversation['status'] {
+  return (
+    value === 'open' ||
+    value === 'waiting_customer' ||
+    value === 'waiting_admin' ||
+    value === 'offer_sent' ||
+    value === 'paid' ||
+    value === 'delivered' ||
+    value === 'closed' ||
+    value === 'archived'
+  );
+}
+
+export async function setConversationsArchived(conversationIds: string[], archived: boolean) {
+  await ensureAnonymousUser();
+  const uniqueIds = Array.from(new Set(conversationIds.filter(Boolean)));
+  if (!uniqueIds.length) return;
+
+  const db = getFirebaseDb();
+  const batch = writeBatch(db);
+
+  await Promise.all(
+    uniqueIds.map(async (conversationId) => {
+      const conversationRef = doc(db, 'conversations', conversationId);
+      const snapshot = await getDoc(conversationRef);
+      const data = snapshot.exists() ? snapshot.data() : {};
+      const currentStatus = isConversationStatus(data.status) ? data.status : 'open';
+      const previousStatus = isConversationStatus(data.previous_status) && data.previous_status !== 'archived' ? data.previous_status : 'open';
+
+      if (archived) {
+        batch.update(conversationRef, {
+          status: 'archived',
+          previous_status: currentStatus === 'archived' ? previousStatus : currentStatus,
+          archived_at: serverTimestamp(),
+          updated_at: serverTimestamp()
+        });
+      } else {
+        batch.update(conversationRef, {
+          status: currentStatus === 'archived' ? previousStatus : currentStatus,
+          archived_at: null,
+          updated_at: serverTimestamp()
+        });
+      }
+    })
+  );
+
+  await batch.commit();
 }
 
 export async function verifyAccess(conversationId: string, accessKey?: string | null) {

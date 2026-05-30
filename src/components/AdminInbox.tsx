@@ -8,6 +8,7 @@ import {
   saveChatConfig,
   saveDesignConfig,
   saveHomeConfig,
+  setConversationsArchived,
   subscribeToChatConfig,
   subscribeToConversations,
   subscribeToDesignConfig,
@@ -15,9 +16,9 @@ import {
 } from '@/lib/firebase/data';
 import type { ChatInterfaceConfig, Conversation, DesignConfig, HomeInterfaceConfig } from '@/lib/types';
 import { applyDesignConfig } from '@/utils/design';
-import { Inbox, LayoutPanelTop, MessageSquareText, Palette, Save, Search, Type } from 'lucide-react';
+import { Archive, ArchiveRestore, CheckSquare2, GripVertical, Inbox, LayoutPanelTop, MessageSquareText, Palette, Save, Search, Square, Type } from 'lucide-react';
 import Link from 'next/link';
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type DragEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(' ');
@@ -425,6 +426,11 @@ export function AdminInbox() {
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
   const [tab, setTab] = useState<'inbox' | 'website' | 'chat' | 'design'>('inbox');
+  const [inboxView, setInboxView] = useState<'active' | 'archived'>('active');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [draggingIds, setDraggingIds] = useState<string[]>([]);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [archiveNotice, setArchiveNotice] = useState('');
 
   useEffect(() => {
     const saved = localStorage.getItem('kiaro.adminSecret');
@@ -455,14 +461,78 @@ export function AdminInbox() {
     };
   }, [entered, secret]);
 
+  useEffect(() => {
+    setSelectedIds([]);
+    setDraggingIds([]);
+    setArchiveNotice('');
+  }, [inboxView, tab]);
+
+  const activeCount = conversations.filter((conversation) => conversation.status !== 'archived').length;
+  const archivedCount = conversations.filter((conversation) => conversation.status === 'archived').length;
+
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
-    if (!q) return conversations;
-    return conversations.filter((c) => {
+    const scoped = conversations.filter((conversation) => (inboxView === 'archived' ? conversation.status === 'archived' : conversation.status !== 'archived'));
+    if (!q) return scoped;
+    return scoped.filter((c) => {
       const guest = c.guest_sessions;
       return [c.title, c.status, guest?.name, guest?.email, guest?.access_key].filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
     });
-  }, [conversations, query]);
+  }, [conversations, inboxView, query]);
+
+  const selectedInView = selectedIds.filter((id) => filtered.some((conversation) => conversation.id === id));
+  const allVisibleSelected = filtered.length > 0 && filtered.every((conversation) => selectedIds.includes(conversation.id));
+
+  function toggleSelected(conversationId: string) {
+    setSelectedIds((current) => (current.includes(conversationId) ? current.filter((id) => id !== conversationId) : [...current, conversationId]));
+  }
+
+  function toggleSelectAllVisible() {
+    if (allVisibleSelected) {
+      setSelectedIds((current) => current.filter((id) => !filtered.some((conversation) => conversation.id === id)));
+      return;
+    }
+    setSelectedIds((current) => Array.from(new Set([...current, ...filtered.map((conversation) => conversation.id)])));
+  }
+
+  function startConversationDrag(event: DragEvent, conversationId: string) {
+    const ids = selectedIds.includes(conversationId) ? selectedInView : [conversationId];
+    setDraggingIds(ids);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('application/json', JSON.stringify({ conversationIds: ids }));
+    event.dataTransfer.setData('text/plain', ids.join(','));
+  }
+
+  async function moveConversations(conversationIds: string[], archived: boolean) {
+    const uniqueIds = Array.from(new Set(conversationIds.filter(Boolean)));
+    if (!uniqueIds.length) return;
+    setArchiveBusy(true);
+    setArchiveNotice('');
+    setError('');
+    try {
+      await setConversationsArchived(uniqueIds, archived);
+      setSelectedIds((current) => current.filter((id) => !uniqueIds.includes(id)));
+      setDraggingIds([]);
+      setArchiveNotice(archived ? `${uniqueIds.length} conversation${uniqueIds.length > 1 ? 's' : ''} archived.` : `${uniqueIds.length} conversation${uniqueIds.length > 1 ? 's' : ''} restored.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : archived ? 'Could not archive conversations.' : 'Could not restore conversations.');
+    } finally {
+      setArchiveBusy(false);
+    }
+  }
+
+  function handleArchiveDrop(event: DragEvent) {
+    event.preventDefault();
+    let ids = draggingIds;
+    try {
+      const payload = JSON.parse(event.dataTransfer.getData('application/json')) as { conversationIds?: string[] };
+      if (Array.isArray(payload.conversationIds)) ids = payload.conversationIds;
+    } catch {
+      const raw = event.dataTransfer.getData('text/plain');
+      if (raw) ids = raw.split(',').map((item) => item.trim()).filter(Boolean);
+    }
+    void moveConversations(ids, inboxView !== 'archived');
+  }
 
   async function enter() {
     setError('');
@@ -535,26 +605,115 @@ export function AdminInbox() {
       {tab === 'design' ? <DesignSystemEditor /> : null}
 
       {tab === 'inbox' ? (
-        <div className="grid gap-3">
-          {filtered.map((conversation) => {
-            const guest = conversation.guest_sessions;
-            return (
-              <Link key={conversation.id} href={`/admin/${conversation.id}`} className="kiaro-card kiaro-hover block p-5">
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div>
-                    <div className="font-display text-xl font-black">{guest?.name || 'Unnamed client'}</div>
-                    <div className="mt-1 text-sm text-kiaro-muted">{guest?.email || 'No email'} · {guest?.access_key || 'No key'}</div>
-                  </div>
-                  <div className="text-right">
+        <div className="grid gap-5">
+          <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
+            <div className="kiaro-card p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setInboxView('active')}
+                    className={cx(inboxView === 'active' ? 'btn-primary' : 'btn-ghost', 'px-4 py-2 text-xs font-bold')}
+                  >
+                    Active inbox · {activeCount}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInboxView('archived')}
+                    className={cx(inboxView === 'archived' ? 'btn-primary' : 'btn-ghost', 'px-4 py-2 text-xs font-bold')}
+                  >
+                    Archive · {archivedCount}
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={toggleSelectAllVisible} className="btn-ghost inline-flex items-center gap-2 px-4 py-2 text-xs font-bold">
+                    {allVisibleSelected ? <CheckSquare2 size={15} /> : <Square size={15} />} {allVisibleSelected ? 'Clear visible' : 'Select visible'}
+                  </button>
+                  {selectedInView.length ? (
+                    <button
+                      type="button"
+                      onClick={() => void moveConversations(selectedInView, inboxView !== 'archived')}
+                      disabled={archiveBusy}
+                      className="btn-ghost inline-flex items-center gap-2 px-4 py-2 text-xs font-bold"
+                    >
+                      {inboxView === 'archived' ? <ArchiveRestore size={15} /> : <Archive size={15} />}
+                      {inboxView === 'archived' ? 'Restore selected' : 'Archive selected'}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              <p className="mt-3 text-sm leading-6 text-kiaro-muted">
+                Bulk select old conversations, then drag any selected card into the archive box. Archived conversations stay searchable and can be restored anytime.
+              </p>
+              {archiveNotice ? <div className="mt-4 rounded-2xl border border-kiaro-lime/20 bg-kiaro-lime/10 p-3 text-sm text-kiaro-lime">{archiveNotice}</div> : null}
+            </div>
+
+            <div
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={handleArchiveDrop}
+              className={cx(
+                'grid min-h-36 place-items-center rounded-[28px] border border-dashed p-5 text-center transition',
+                draggingIds.length ? 'border-white/55 bg-white/[0.06]' : 'border-white/12 bg-white/[0.025]'
+              )}
+            >
+              <div>
+                <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl border border-white/10 bg-black/30">
+                  {inboxView === 'archived' ? <ArchiveRestore size={22} /> : <Archive size={22} />}
+                </div>
+                <div className="mt-4 font-display text-xl font-black">{inboxView === 'archived' ? 'Restore drop zone' : 'Archive drop box'}</div>
+                <p className="mt-2 text-sm leading-6 text-kiaro-muted">
+                  {draggingIds.length
+                    ? `Release to ${inboxView === 'archived' ? 'restore' : 'archive'} ${draggingIds.length} conversation${draggingIds.length > 1 ? 's' : ''}.`
+                    : inboxView === 'archived'
+                      ? 'Drag archived conversations here to restore them to the active inbox.'
+                      : 'Drag selected conversations here to clear your active inbox.'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-3">
+            {filtered.map((conversation) => {
+              const guest = conversation.guest_sessions;
+              const selected = selectedIds.includes(conversation.id);
+              return (
+                <div
+                  key={conversation.id}
+                  draggable
+                  onDragStart={(event) => startConversationDrag(event, conversation.id)}
+                  onDragEnd={() => setDraggingIds([])}
+                  className={cx(
+                    'kiaro-card kiaro-hover grid gap-4 p-5 transition md:grid-cols-[auto_1fr_auto]',
+                    selected && 'border-white/45 bg-white/[0.045]'
+                  )}
+                >
+                  <button
+                    type="button"
+                    onClick={() => toggleSelected(conversation.id)}
+                    className="grid h-11 w-11 place-items-center rounded-2xl border border-white/10 bg-white/[0.025] text-kiaro-muted transition hover:border-white/35 hover:text-kiaro-text"
+                    aria-label={selected ? 'Deselect conversation' : 'Select conversation'}
+                  >
+                    {selected ? <CheckSquare2 size={18} /> : <Square size={18} />}
+                  </button>
+
+                  <Link href={`/admin/${conversation.id}`} className="block min-w-0">
+                    <div className="flex items-center gap-2">
+                      <GripVertical size={16} className="shrink-0 text-kiaro-muted/60" />
+                      <div className="truncate font-display text-xl font-black">{guest?.name || 'Unnamed client'}</div>
+                    </div>
+                    <div className="mt-1 truncate text-sm text-kiaro-muted">{guest?.email || 'No email'} · {guest?.access_key || 'Google account'}</div>
+                  </Link>
+
+                  <div className="flex items-center justify-between gap-3 md:block md:text-right">
                     <div className="rounded-full border border-white/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.18em] text-kiaro-muted">{conversation.status}</div>
                     <div className="mt-2 text-xs text-kiaro-muted">Updated {new Date(conversation.updated_at).toLocaleString()}</div>
                   </div>
                 </div>
-              </Link>
-            );
-          })}
+              );
+            })}
 
-          {!filtered.length ? <div className="kiaro-card p-8 text-center text-sm text-kiaro-muted">No conversations yet.</div> : null}
+            {!filtered.length ? <div className="kiaro-card p-8 text-center text-sm text-kiaro-muted">{inboxView === 'archived' ? 'No archived conversations yet.' : 'No active conversations yet.'}</div> : null}
+          </div>
         </div>
       ) : null}
     </div>
