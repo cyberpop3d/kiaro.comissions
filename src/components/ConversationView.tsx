@@ -2,13 +2,60 @@
 
 import { AnnotationModal } from '@/components/AnnotationModal';
 import { OfferCard } from '@/components/OfferCard';
-import { deleteAttachmentPermanently, markOfferPaid, saveAnnotationRecord, sendOfferMessage, sendTextMessage, subscribeToMessages, uploadConversationFile, verifyAccess } from '@/lib/firebase/data';
-import type { Attachment, Message } from '@/lib/types';
-import { FileArchive, Image as ImageIcon, Images, Paperclip, Plus, Send, Trash2, UploadCloud, Wand2, type LucideIcon } from 'lucide-react';
+import {
+  createPaidProjectRequest,
+  deleteAttachmentPermanently,
+  deletePaidProjectFinalFile,
+  markOfferPaid,
+  PAID_PROJECT_SLOT_COUNT,
+  saveAnnotationRecord,
+  sendOfferMessage,
+  sendTextMessage,
+  subscribeToMessages,
+  subscribeToPaidProjects,
+  updatePaidProjectStatus,
+  uploadConversationFile,
+  uploadPaidProjectFinalFile,
+  verifyAccess
+} from '@/lib/firebase/data';
+import type { Attachment, Message, PaidProject, ProjectFinalFile, ProjectStatus } from '@/lib/types';
+import {
+  CheckCircle2,
+  FileArchive,
+  FolderPlus,
+  Image as ImageIcon,
+  Images,
+  Lock,
+  Paperclip,
+  Plus,
+  Send,
+  Trash2,
+  UploadCloud,
+  Wand2,
+  XCircle,
+  type LucideIcon
+} from 'lucide-react';
 import { type DragEvent, useEffect, useMemo, useRef, useState } from 'react';
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(' ');
+}
+
+function attachmentDownloadUrl(attachment: { signed_url?: string | null; file_name?: string | null }) {
+  if (!attachment.signed_url) return '#';
+  const params = new URLSearchParams({
+    url: attachment.signed_url,
+    filename: attachment.file_name || 'download'
+  });
+  return `/api/download?${params.toString()}`;
+}
+
+function projectFileDownloadUrl(file: ProjectFinalFile) {
+  const params = new URLSearchParams({
+    url: file.signed_url,
+    filename: file.file_name || 'download'
+  });
+  return `/api/download?${params.toString()}`;
 }
 
 function AttachmentPreview({
@@ -39,16 +86,6 @@ function AttachmentPreview({
       )}
     </div>
   );
-}
-
-
-function attachmentDownloadUrl(attachment: Attachment) {
-  if (!attachment.signed_url) return '#';
-  const params = new URLSearchParams({
-    url: attachment.signed_url,
-    filename: attachment.file_name || 'download'
-  });
-  return `/api/download?${params.toString()}`;
 }
 
 function EmptyLibraryCard({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
@@ -139,6 +176,162 @@ function ImageLibraryCard({
   );
 }
 
+function statusLabel(status: ProjectStatus) {
+  if (status === 'requested') return 'Requested';
+  if (status === 'offer_sent') return 'Offer sent';
+  if (status === 'active') return 'Paid access';
+  return 'Case closed';
+}
+
+function PaidProjectCard({
+  slot,
+  project,
+  role,
+  onNewProject,
+  onActivate,
+  onClose,
+  onUploadFinal,
+  onDeleteFinal,
+  working
+}: {
+  slot: number;
+  project?: PaidProject;
+  role: 'customer' | 'admin';
+  onNewProject: () => void;
+  onActivate: (project: PaidProject) => void;
+  onClose: (project: PaidProject) => void;
+  onUploadFinal: (project: PaidProject) => void;
+  onDeleteFinal: (project: PaidProject, file: ProjectFinalFile) => void;
+  working?: boolean;
+}) {
+  if (!project) {
+    return (
+      <div className="rounded-3xl border border-dashed border-white/10 bg-white/[0.02] p-4 text-kiaro-muted">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="text-[10px] font-bold uppercase tracking-[0.22em]">Project slot {slot}</div>
+          <Lock size={15} className="opacity-35" />
+        </div>
+        <div className="min-h-20 rounded-2xl border border-white/[0.06] bg-black/15" />
+        {role === 'customer' ? (
+          <button type="button" onClick={onNewProject} className="btn-ghost mt-3 flex w-full items-center justify-center gap-2 px-4 py-3 text-xs font-bold">
+            <FolderPlus size={15} /> New project
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
+  const canSeeDeliverables = role === 'admin' || project.active || project.status === 'closed';
+  const finalFiles = project.final_files || [];
+
+  return (
+    <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-4 kiaro-hover">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-kiaro-muted">Project {slot}</div>
+          <div className="mt-1 truncate font-display text-lg font-black">{project.title}</div>
+        </div>
+        <span className={cx('shrink-0 rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em]', project.active || project.status === 'closed' ? 'border-kiaro-lime/25 text-kiaro-lime' : 'border-white/10 text-kiaro-muted')}>
+          {statusLabel(project.status)}
+        </span>
+      </div>
+
+      {role === 'customer' ? (
+        <p className="mt-3 text-xs leading-5 text-kiaro-muted">
+          {project.active
+            ? 'Delivery access is active. Download final files below.'
+            : project.status === 'closed'
+              ? 'This case is closed. Final files remain available if delivery was activated.'
+              : 'Kiaro Studio will send a payment link after the scope is clear. Delivery activates after payment is manually confirmed.'}
+        </p>
+      ) : (
+        <p className="mt-3 text-xs leading-5 text-kiaro-muted">Activate this project after payment is confirmed, upload final STL/ZIP files, then close the case when delivery is complete.</p>
+      )}
+
+      {canSeeDeliverables ? (
+        <div className="mt-4 space-y-2">
+          {finalFiles.length ? (
+            finalFiles.map((file) => (
+              <div key={file.id} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-xs">
+                <a href={projectFileDownloadUrl(file)} className="flex min-w-0 flex-1 items-center gap-2">
+                  <FileArchive size={15} className="shrink-0 text-kiaro-muted" />
+                  <span className="truncate">{file.file_name}</span>
+                </a>
+                <div className="flex shrink-0 items-center gap-2">
+                  <a href={projectFileDownloadUrl(file)} className="font-bold text-kiaro-muted hover:text-kiaro-text">Download</a>
+                  {role === 'admin' ? (
+                    <button type="button" onClick={() => onDeleteFinal(project, file)} className="text-red-100 opacity-70 hover:opacity-100" title="Delete final file">
+                      <Trash2 size={13} />
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="rounded-2xl border border-dashed border-white/10 bg-black/15 p-4 text-center text-xs text-kiaro-muted">No final files uploaded yet.</div>
+          )}
+        </div>
+      ) : null}
+
+      {role === 'admin' ? (
+        <div className="mt-4 grid gap-2">
+          <button type="button" disabled={working} onClick={() => onActivate(project)} className="btn-ghost flex items-center justify-center gap-2 px-4 py-3 text-xs font-bold">
+            <CheckCircle2 size={15} /> Activate paid project
+          </button>
+          <button type="button" disabled={working} onClick={() => onUploadFinal(project)} className="btn-ghost flex items-center justify-center gap-2 px-4 py-3 text-xs font-bold">
+            <UploadCloud size={15} /> Upload final files
+          </button>
+          <button type="button" disabled={working} onClick={() => onClose(project)} className="btn-ghost flex items-center justify-center gap-2 border-red-300/20 px-4 py-3 text-xs font-bold text-red-100 hover:border-red-300/45">
+            <XCircle size={15} /> Close case
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function NewProjectModal({
+  title,
+  setTitle,
+  busy,
+  onCreate,
+  onClose
+}: {
+  title: string;
+  setTitle: (title: string) => void;
+  busy: boolean;
+  onCreate: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 px-5 backdrop-blur-sm">
+      <div className="kiaro-card w-full max-w-lg p-6">
+        <h2 className="font-display text-3xl font-black">Start a project</h2>
+        <p className="mt-3 text-sm leading-6 text-kiaro-muted">
+          We will discuss the project details here. For now, give it a simple name such as the character name or Project 1. After the scope is clear, Kiaro Studio will send a price offer. Once payment is completed and manually confirmed, the delivery area for this project can be activated.
+        </p>
+        <input
+          className="glass-input mt-5 w-full px-4 py-4"
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') onCreate();
+          }}
+          placeholder="Project name, character name, or Project 1"
+        />
+        <div className="mt-4 flex gap-3">
+          <button className="btn-primary flex-1 px-5 py-3 text-sm" disabled={busy} onClick={onCreate}>
+            Create project
+          </button>
+          <button className="btn-ghost px-5 py-3 text-sm font-bold" onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function getMessageDisplayName(sender: Message['sender'], viewerRole: 'customer' | 'admin') {
   if (sender === 'system') return 'Update';
   if (sender === viewerRole) return 'You';
@@ -169,11 +362,13 @@ export function ConversationView({
   accessKeyBanner?: boolean;
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
+  const [projects, setProjects] = useState<PaidProject[]>([]);
   const [body, setBody] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [projectWorkingId, setProjectWorkingId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [accessOk, setAccessOk] = useState(role === 'admin');
   const [annotating, setAnnotating] = useState<Attachment | null>(null);
@@ -184,8 +379,13 @@ export function ConversationView({
   const [offerAmount, setOfferAmount] = useState('35');
   const [offerScope, setOfferScope] = useState('Custom design/support work agreed in Kiaro Studio chat.');
   const [offerUrl, setOfferUrl] = useState('');
+  const [projectModalOpen, setProjectModalOpen] = useState(false);
+  const [projectTitle, setProjectTitle] = useState('');
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [finalUploadProject, setFinalUploadProject] = useState<PaidProject | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const variationInputRef = useRef<HTMLInputElement | null>(null);
+  const finalFileInputRef = useRef<HTMLInputElement | null>(null);
   const dragDepthRef = useRef(0);
 
   useEffect(() => {
@@ -224,6 +424,11 @@ export function ConversationView({
   }, [accessOk, conversationId]);
 
   useEffect(() => {
+    if (!accessOk) return undefined;
+    return subscribeToPaidProjects(conversationId, setProjects);
+  }, [accessOk, conversationId]);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length]);
 
@@ -241,6 +446,13 @@ export function ConversationView({
     return grouped;
   }, [imageAttachments]);
   const fileAttachments = useMemo(() => attachments.filter((attachment) => attachment.kind === 'file'), [attachments]);
+  const projectsBySlot = useMemo(() => {
+    const grouped: Record<number, PaidProject> = {};
+    projects.forEach((project) => {
+      grouped[project.slot] = project;
+    });
+    return grouped;
+  }, [projects]);
 
   function isSupportedUpload(file: File) {
     const extension = `.${file.name.split('.').pop()?.toLowerCase() || ''}`;
@@ -256,7 +468,6 @@ export function ConversationView({
     }
 
     for (const file of nextFiles) {
-      // Upload sequentially to avoid overloading Firebase Storage and to keep chat order readable.
       await uploadFile(file);
     }
   }
@@ -362,6 +573,7 @@ export function ConversationView({
       setError(err instanceof Error ? err.message : 'Mark paid failed.');
     }
   }
+
   async function deleteAttachment(attachment: Attachment, includeBranches = true) {
     if (role !== 'admin') return;
     const branchText = includeBranches ? ' This will also delete its branches/variations.' : '';
@@ -379,6 +591,91 @@ export function ConversationView({
     }
   }
 
+  async function createProject() {
+    const cleanTitle = projectTitle.trim();
+    if (!cleanTitle) {
+      setError('Please enter a project name.');
+      return;
+    }
+
+    setCreatingProject(true);
+    setError('');
+    try {
+      await createPaidProjectRequest(conversationId, cleanTitle, role);
+      setProjectTitle('');
+      setProjectModalOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Project could not be created.');
+    } finally {
+      setCreatingProject(false);
+    }
+  }
+
+  async function activateProject(project: PaidProject) {
+    if (role !== 'admin') return;
+    setProjectWorkingId(project.id);
+    setError('');
+    try {
+      await updatePaidProjectStatus(conversationId, project.id, 'active');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not activate project.');
+    } finally {
+      setProjectWorkingId(null);
+    }
+  }
+
+  async function closeProject(project: PaidProject) {
+    if (role !== 'admin') return;
+    const confirmed = window.confirm(`Close case for ${project.title}? The project card will stay visible for final downloads.`);
+    if (!confirmed) return;
+
+    setProjectWorkingId(project.id);
+    setError('');
+    try {
+      await updatePaidProjectStatus(conversationId, project.id, 'closed');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not close project.');
+    } finally {
+      setProjectWorkingId(null);
+    }
+  }
+
+  function openFinalUpload(project: PaidProject) {
+    setFinalUploadProject(project);
+    finalFileInputRef.current?.click();
+  }
+
+  async function uploadFinalFiles(files: FileList | null) {
+    if (role !== 'admin' || !finalUploadProject || !files?.length) return;
+    setProjectWorkingId(finalUploadProject.id);
+    setError('');
+    try {
+      for (const file of Array.from(files)) {
+        await uploadPaidProjectFinalFile(conversationId, finalUploadProject, file, role);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Final file upload failed.');
+    } finally {
+      setProjectWorkingId(null);
+      setFinalUploadProject(null);
+    }
+  }
+
+  async function deleteFinalFile(project: PaidProject, file: ProjectFinalFile) {
+    if (role !== 'admin') return;
+    const confirmed = window.confirm(`Permanently delete final file ${file.file_name}?`);
+    if (!confirmed) return;
+
+    setProjectWorkingId(project.id);
+    setError('');
+    try {
+      await deletePaidProjectFinalFile(conversationId, project.id, file, adminSecret || '');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Final file delete failed.');
+    } finally {
+      setProjectWorkingId(null);
+    }
+  }
 
   async function saveAnnotation(dataUrl: string, strokes: unknown[]) {
     const source = annotating;
@@ -571,14 +868,45 @@ export function ConversationView({
           </div>
         </div>
 
+        <div className="kiaro-card p-5">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="font-display text-xl font-black">Paid projects</h2>
+              <p className="mt-1 text-xs leading-5 text-kiaro-muted">Deposit, final payment, delivery files and case status.</p>
+            </div>
+            <button type="button" onClick={() => setProjectModalOpen(true)} className="btn-ghost grid h-9 w-9 place-items-center" title="New project">
+              <Plus size={16} />
+            </button>
+          </div>
+          <div className="grid gap-3">
+            {Array.from({ length: PAID_PROJECT_SLOT_COUNT }, (_, index) => {
+              const slot = index + 1;
+              return (
+                <PaidProjectCard
+                  key={slot}
+                  slot={slot}
+                  project={projectsBySlot[slot]}
+                  role={role}
+                  onNewProject={() => setProjectModalOpen(true)}
+                  onActivate={activateProject}
+                  onClose={closeProject}
+                  onUploadFinal={openFinalUpload}
+                  onDeleteFinal={deleteFinalFile}
+                  working={Boolean(projectWorkingId && projectsBySlot[slot]?.id === projectWorkingId)}
+                />
+              );
+            })}
+          </div>
+        </div>
+
         {role === 'admin' ? (
           <div className="kiaro-card p-5">
-            <h2 className="font-display text-xl font-black">Send offer</h2>
-            <p className="mt-2 text-sm leading-6 text-kiaro-muted">Customer sees nothing until you send this card. Paste any payment link.</p>
+            <h2 className="font-display text-xl font-black">Send payment link</h2>
+            <p className="mt-2 text-sm leading-6 text-kiaro-muted">Paste a Ko-fi or custom payment link. You can send a deposit first and a final payment link later.</p>
             <div className="mt-4 space-y-3">
               <input className="glass-input w-full px-4 py-3" value={offerAmount} onChange={(e) => setOfferAmount(e.target.value)} placeholder="Amount" />
               <textarea className="glass-input min-h-24 w-full px-4 py-3" value={offerScope} onChange={(e) => setOfferScope(e.target.value)} placeholder="Scope" />
-              <input className="glass-input w-full px-4 py-3" value={offerUrl} onChange={(e) => setOfferUrl(e.target.value)} placeholder="Payment link" />
+              <input className="glass-input w-full px-4 py-3" value={offerUrl} onChange={(e) => setOfferUrl(e.target.value)} placeholder="Ko-fi or payment link" />
               <button className="btn-primary w-full px-5 py-3 text-sm" onClick={sendOffer}>Send custom offer</button>
             </div>
           </div>
@@ -604,12 +932,34 @@ export function ConversationView({
         }}
       />
 
+      <input
+        ref={finalFileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        accept=".zip,.stl,.3mf,.obj,.fbx,.pdf"
+        onChange={(event) => {
+          uploadFinalFiles(event.currentTarget.files);
+          event.currentTarget.value = '';
+        }}
+      />
+
       {annotating?.signed_url ? (
         <AnnotationModal
           imageUrl={annotating.signed_url}
           fileName={annotating.file_name}
           onClose={() => setAnnotating(null)}
           onSave={saveAnnotation}
+        />
+      ) : null}
+
+      {projectModalOpen ? (
+        <NewProjectModal
+          title={projectTitle}
+          setTitle={setProjectTitle}
+          busy={creatingProject}
+          onCreate={createProject}
+          onClose={() => setProjectModalOpen(false)}
         />
       ) : null}
     </div>

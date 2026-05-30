@@ -52,6 +52,31 @@ export type Offer = {
   updated_at: string;
 };
 
+export type ProjectStatus = 'requested' | 'offer_sent' | 'active' | 'closed';
+
+export type ProjectFinalFile = {
+  id: string;
+  storage_path: string;
+  file_name: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  signed_url: string;
+  created_at: string;
+  uploaded_by: Sender;
+};
+
+export type PaidProject = {
+  id: string;
+  conversation_id: string;
+  slot: number;
+  title: string;
+  status: ProjectStatus;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+  final_files: ProjectFinalFile[];
+};
+
 export type Message = {
   id: string;
   conversation_id: string;

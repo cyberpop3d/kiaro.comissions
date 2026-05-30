@@ -101,3 +101,24 @@ Vercel will install the dependencies and deploy automatically after GitHub push.
 ## v12 message label polish
 - Customer-facing chat no longer displays raw sender labels like CUSTOMER.
 - Own messages show as You, admin messages show as Kiaro Studio, and system messages show as Update.
+
+## v13 Paid projects + manual payment flow
+
+This build adds a Paid projects panel below the image and file libraries.
+
+Customer flow:
+- Customer clicks + New project.
+- Customer enters a simple project name, such as a character name or Project 1.
+- The request appears in the conversation.
+- Kiaro Studio can send a Ko-fi/custom payment link as an offer card.
+- Delivery files stay hidden until Kiaro Studio manually activates the project.
+
+Admin flow:
+- Open /admin and enter ADMIN_SECRET.
+- Open a conversation.
+- Use Send payment link to send a Ko-fi/custom checkout URL.
+- After payment is confirmed manually, click Activate paid project on the related project card.
+- Upload final STL/ZIP/3MF files into that project card.
+- Click Close case when delivery is complete.
+
+Each conversation shows 10 paid project slots. Empty slots stay as blank placeholders until a project request is created.

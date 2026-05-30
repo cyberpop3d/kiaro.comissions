@@ -1,7 +1,9 @@
-import type { Attachment, Conversation, HomeInterfaceConfig, Message, Offer } from '@/lib/types';
+import type { Attachment, Conversation, HomeInterfaceConfig, Message, Offer, PaidProject, ProjectFinalFile, ProjectStatus, Sender } from '@/lib/types';
 import { getFirebaseAuth, getFirebaseDb } from '@/lib/firebase/client';
 import {
   addDoc,
+  arrayRemove,
+  arrayUnion,
   collection,
   deleteDoc,
   doc,
@@ -631,6 +633,206 @@ export async function deleteAttachmentPermanently(
 export async function deleteConversation(conversationId: string) {
   const db = getFirebaseDb();
   await deleteDoc(doc(db, 'conversations', conversationId));
+}
+
+
+export const PAID_PROJECT_SLOT_COUNT = 10;
+
+function safeProjectTitle(value?: string | null) {
+  return (value || '').trim().slice(0, 90) || 'Untitled project';
+}
+
+function mapFinalFile(raw: unknown): ProjectFinalFile | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const data = raw as Record<string, unknown>;
+  return {
+    id: String(data.id || crypto.randomUUID()),
+    storage_path: String(data.storage_path || ''),
+    file_name: String(data.file_name || 'final-file'),
+    mime_type: data.mime_type ? String(data.mime_type) : null,
+    size_bytes: typeof data.size_bytes === 'number' ? data.size_bytes : data.size_bytes ? Number(data.size_bytes) : null,
+    signed_url: String(data.signed_url || ''),
+    created_at: timestampToIso(data.created_at),
+    uploaded_by: (data.uploaded_by || 'admin') as Sender
+  };
+}
+
+function mapPaidProjectData(id: string, data: DocumentData): PaidProject {
+  const finalFiles = Array.isArray(data.final_files) ? data.final_files.map(mapFinalFile).filter(Boolean) as ProjectFinalFile[] : [];
+
+  return {
+    id,
+    conversation_id: String(data.conversation_id || ''),
+    slot: Number(data.slot || 1),
+    title: String(data.title || 'Untitled project'),
+    status: (data.status || 'requested') as ProjectStatus,
+    active: Boolean(data.active),
+    created_at: timestampToIso(data.created_at),
+    updated_at: timestampToIso(data.updated_at),
+    final_files: finalFiles
+  };
+}
+
+function mapPaidProject(snap: QueryDocumentSnapshot<DocumentData>): PaidProject {
+  return mapPaidProjectData(snap.id, snap.data());
+}
+
+export function subscribeToPaidProjects(conversationId: string, callback: (projects: PaidProject[]) => void): Unsubscribe {
+  const db = getFirebaseDb();
+  const q = query(collection(db, 'conversations', conversationId, 'projects'), orderBy('slot', 'asc'), limit(PAID_PROJECT_SLOT_COUNT));
+  return onSnapshot(q, (snapshot) => {
+    callback(snapshot.docs.map(mapPaidProject));
+  });
+}
+
+async function getNextProjectSlot(conversationId: string) {
+  const db = getFirebaseDb();
+  const snapshot = await getDocs(collection(db, 'conversations', conversationId, 'projects'));
+  const usedSlots = new Set(snapshot.docs.map((docSnap) => Number(docSnap.data().slot || 0)).filter(Boolean));
+  for (let slot = 1; slot <= PAID_PROJECT_SLOT_COUNT; slot += 1) {
+    if (!usedSlots.has(slot)) return slot;
+  }
+  throw new Error('All 10 paid project slots are already used.');
+}
+
+export async function createPaidProjectRequest(conversationId: string, title: string, sender: Message['sender']) {
+  await ensureAnonymousUser();
+  const db = getFirebaseDb();
+  const cleanTitle = safeProjectTitle(title);
+  const slot = await getNextProjectSlot(conversationId);
+
+  const projectRef = await addDoc(collection(db, 'conversations', conversationId, 'projects'), {
+    conversation_id: conversationId,
+    slot,
+    title: cleanTitle,
+    status: 'requested',
+    active: false,
+    final_files: [],
+    created_at: serverTimestamp(),
+    updated_at: serverTimestamp()
+  });
+
+  await addDoc(collection(db, 'conversations', conversationId, 'messages'), {
+    conversation_id: conversationId,
+    sender,
+    type: 'text',
+    body:
+      `New paid project request opened: ${cleanTitle}\n\n` +
+      'We will discuss the project details here. Kiaro Studio can send a deposit or final payment link when the scope is clear.',
+    created_at: serverTimestamp()
+  });
+
+  await updateDoc(doc(db, 'conversations', conversationId), {
+    status: sender === 'admin' ? 'waiting_customer' : 'waiting_admin',
+    updated_at: serverTimestamp()
+  });
+
+  return projectRef.id;
+}
+
+export async function updatePaidProjectStatus(conversationId: string, projectId: string, status: ProjectStatus) {
+  await ensureAnonymousUser();
+  const db = getFirebaseDb();
+  const projectRef = doc(db, 'conversations', conversationId, 'projects', projectId);
+  const projectSnap = await getDoc(projectRef);
+  const projectTitle = projectSnap.exists() ? String(projectSnap.data().title || 'project') : 'project';
+  const active = status === 'active' || status === 'closed';
+
+  await updateDoc(projectRef, {
+    status,
+    active,
+    updated_at: serverTimestamp()
+  });
+
+  const body =
+    status === 'active'
+      ? `Paid project delivery area activated: ${projectTitle}`
+      : status === 'closed'
+        ? `Case closed: ${projectTitle}`
+        : `Paid project status updated to ${status}: ${projectTitle}`;
+
+  await addDoc(collection(db, 'conversations', conversationId, 'messages'), {
+    conversation_id: conversationId,
+    sender: 'system',
+    type: 'system',
+    body,
+    created_at: serverTimestamp()
+  });
+
+  await updateDoc(doc(db, 'conversations', conversationId), {
+    status: status === 'closed' ? 'closed' : status === 'active' ? 'paid' : 'offer_sent',
+    updated_at: serverTimestamp()
+  });
+}
+
+export async function uploadPaidProjectFinalFile(conversationId: string, project: PaidProject, file: File, sender: Message['sender']) {
+  await ensureAnonymousUser();
+  const db = getFirebaseDb();
+  const uploaded = await uploadFileToUploadThing(file);
+  const finalFile: ProjectFinalFile = {
+    id: crypto.randomUUID(),
+    storage_path: uploaded.key,
+    file_name: uploaded.name || file.name || 'final-file',
+    mime_type: file.type || null,
+    size_bytes: uploaded.size || file.size,
+    signed_url: uploaded.url,
+    created_at: nowIso(),
+    uploaded_by: sender
+  };
+
+  await updateDoc(doc(db, 'conversations', conversationId, 'projects', project.id), {
+    final_files: arrayUnion(finalFile),
+    updated_at: serverTimestamp()
+  });
+
+  await addDoc(collection(db, 'conversations', conversationId, 'messages'), {
+    conversation_id: conversationId,
+    sender: 'system',
+    type: 'system',
+    body: `Final delivery file added to ${project.title}: ${finalFile.file_name}`,
+    created_at: serverTimestamp()
+  });
+
+  await updateDoc(doc(db, 'conversations', conversationId), {
+    updated_at: serverTimestamp()
+  });
+}
+
+export async function deletePaidProjectFinalFile(conversationId: string, projectId: string, file: ProjectFinalFile, adminSecret: string) {
+  await ensureAnonymousUser();
+  if (!adminSecret) throw new Error('Admin secret is required to permanently delete final files.');
+
+  if (file.storage_path) {
+    const res = await fetch('/api/admin/delete-upload', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-secret': adminSecret
+      },
+      body: JSON.stringify({ keys: [file.storage_path] })
+    });
+
+    if (!res.ok) {
+      let message = 'UploadThing final file deletion failed.';
+      try {
+        const payload = (await res.json()) as { error?: string };
+        message = payload.error || message;
+      } catch {
+        // Keep fallback message.
+      }
+      throw new Error(message);
+    }
+  }
+
+  const db = getFirebaseDb();
+  await updateDoc(doc(db, 'conversations', conversationId, 'projects', projectId), {
+    final_files: arrayRemove(file),
+    updated_at: serverTimestamp()
+  });
+
+  await updateDoc(doc(db, 'conversations', conversationId), {
+    updated_at: serverTimestamp()
+  });
 }
 
 export function subscribeToHomeConfig(callback: (config: HomeInterfaceConfig) => void): Unsubscribe {
