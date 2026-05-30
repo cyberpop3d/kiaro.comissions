@@ -2,8 +2,9 @@
 
 import { GoogleButton } from '@/components/GoogleButton';
 import { TopNav } from '@/components/TopNav';
-import { defaultHomeConfig, ensureAnonymousUser, getOrCreateGoogleConversation, resumeConversation, startConversation, subscribeToHomeConfig, waitForAuthUser } from '@/lib/firebase/data';
-import type { HomeInterfaceConfig } from '@/lib/types';
+import { defaultDesignConfig, defaultHomeConfig, ensureAnonymousUser, getOrCreateGoogleConversation, resumeConversation, startConversation, subscribeToDesignConfig, subscribeToHomeConfig, waitForAuthUser } from '@/lib/firebase/data';
+import type { DesignConfig, HomeInterfaceConfig } from '@/lib/types';
+import { applyDesignConfig } from '@/utils/design';
 import { ArrowRight, KeyRound } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -11,6 +12,7 @@ import { useEffect, useState } from 'react';
 export default function HomePage() {
   const router = useRouter();
   const [config, setConfig] = useState<HomeInterfaceConfig>(defaultHomeConfig);
+  const [designConfig, setDesignConfig] = useState<DesignConfig>(defaultDesignConfig);
   const [guestOpen, setGuestOpen] = useState(false);
   const [guestName, setGuestName] = useState('');
   const [resumeOpen, setResumeOpen] = useState(false);
@@ -20,16 +22,23 @@ export default function HomePage() {
   const [checkingUser, setCheckingUser] = useState(true);
 
   useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
+    let unsubscribeHome: (() => void) | undefined;
+    let unsubscribeDesign: (() => void) | undefined;
     ensureAnonymousUser()
       .then(() => {
-        unsubscribe = subscribeToHomeConfig(setConfig);
+        unsubscribeHome = subscribeToHomeConfig(setConfig);
+        unsubscribeDesign = subscribeToDesignConfig(setDesignConfig);
       })
       .catch(() => undefined);
     return () => {
-      if (unsubscribe) unsubscribe();
+      if (unsubscribeHome) unsubscribeHome();
+      if (unsubscribeDesign) unsubscribeDesign();
     };
   }, []);
+
+  useEffect(() => {
+    applyDesignConfig(designConfig);
+  }, [designConfig]);
 
   useEffect(() => {
     let cancelled = false;

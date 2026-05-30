@@ -2,8 +2,9 @@
 
 import { ConversationView } from '@/components/ConversationView';
 import { TopNav } from '@/components/TopNav';
-import { subscribeToConversation, updateConversationProfile, verifyAccess, waitForAuthUser } from '@/lib/firebase/data';
-import type { Conversation } from '@/lib/types';
+import { defaultChatConfig, defaultDesignConfig, subscribeToChatConfig, subscribeToConversation, subscribeToDesignConfig, updateConversationProfile, verifyAccess, waitForAuthUser } from '@/lib/firebase/data';
+import type { ChatInterfaceConfig, Conversation, DesignConfig } from '@/lib/types';
+import { applyDesignConfig } from '@/utils/design';
 import { UserRound } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
@@ -13,11 +14,26 @@ export default function ChatPage() {
   const router = useRouter();
   const [accessKey, setAccessKey] = useState<string | null>(null);
   const [conversation, setConversation] = useState<Conversation | null>(null);
+  const [chatConfig, setChatConfig] = useState<ChatInterfaceConfig>(defaultChatConfig);
+  const [designConfig, setDesignConfig] = useState<DesignConfig>(defaultDesignConfig);
   const [checkingAccess, setCheckingAccess] = useState(true);
   const [usernameOpen, setUsernameOpen] = useState(false);
   const [username, setUsername] = useState('');
   const [savingName, setSavingName] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    const unsubscribeChat = subscribeToChatConfig(setChatConfig);
+    const unsubscribeDesign = subscribeToDesignConfig(setDesignConfig);
+    return () => {
+      unsubscribeChat();
+      unsubscribeDesign();
+    };
+  }, []);
+
+  useEffect(() => {
+    applyDesignConfig(designConfig);
+  }, [designConfig]);
 
   useEffect(() => {
     let cancelled = false;
@@ -107,8 +123,8 @@ export default function ChatPage() {
       {usernameOpen ? (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 px-5 backdrop-blur-sm">
           <div className="kiaro-card w-full max-w-md p-6">
-            <h2 className="font-display text-3xl font-black">Choose your username</h2>
-            <p className="mt-3 text-sm leading-6 text-kiaro-muted">This name will appear in your Kiaro Studio commission conversation.</p>
+            <h2 className="font-display text-3xl font-black">{chatConfig.usernameModalTitle}</h2>
+            <p className="mt-3 text-sm leading-6 text-kiaro-muted">{chatConfig.usernameModalBody}</p>
             {error ? <div className="mt-4 rounded-2xl border border-red-400/25 bg-red-500/10 p-4 text-sm text-red-100">{error}</div> : null}
             <input
               className="glass-input mt-5 w-full px-4 py-4"
@@ -117,14 +133,14 @@ export default function ChatPage() {
               onKeyDown={(event) => {
                 if (event.key === 'Enter') saveUsername();
               }}
-              placeholder="Username / studio name"
+              placeholder={chatConfig.usernamePlaceholder}
             />
             <div className="mt-4 flex gap-3">
               <button className="btn-primary flex-1 px-5 py-3 text-sm" disabled={savingName} onClick={saveUsername}>
-                Save username
+                {chatConfig.saveUsernameButton}
               </button>
               <button className="btn-ghost px-5 py-3 text-sm font-bold" onClick={() => setUsernameOpen(false)}>
-                Later
+                {chatConfig.laterButton}
               </button>
             </div>
           </div>

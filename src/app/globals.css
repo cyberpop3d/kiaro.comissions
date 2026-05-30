@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Inter+Tight:wght@600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&family=Inter+Tight:wght@600;700;800;900&family=Manrope:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -7,7 +7,13 @@
 :root {
   --font-display: 'Inter Tight';
   --font-body: 'Inter';
-  --bg-radial: radial-gradient(circle at 82% 8%, rgba(58, 64, 54, .16), transparent 36%), radial-gradient(circle at 12% 0%, rgba(54, 70, 78, .13), transparent 32%), #070908;
+  --kiaro-bg-base: #070908;
+  --kiaro-text-main: #f4f3ec;
+  --kiaro-text-muted: rgba(244,243,236,.62);
+  --kiaro-panel-rgb: 18, 21, 21;
+  --kiaro-accent: #f4f3ec;
+  --kiaro-accent-contrast: #090b0b;
+  --bg-radial: radial-gradient(circle at 82% 8%, rgba(58, 64, 54, .16), transparent 36%), radial-gradient(circle at 12% 0%, rgba(54, 70, 78, .13), transparent 32%), var(--kiaro-bg-base);
   --kiaro-line: rgba(255, 255, 255, .105);
   --kiaro-line-strong: rgba(255, 255, 255, .18);
   --kiaro-panel: rgba(15, 18, 17, .82);
@@ -19,7 +25,7 @@
 html, body {
   min-height: 100%;
   background: var(--bg-radial);
-  color: #f3f4ef;
+  color: var(--kiaro-text-main);
 }
 
 body {
@@ -43,7 +49,7 @@ button:disabled { cursor: not-allowed; }
 
 .kiaro-card {
   border: 1px solid var(--kiaro-line);
-  background: linear-gradient(180deg, rgba(18, 21, 21, 0.92), rgba(8, 10, 10, 0.94));
+  background: linear-gradient(180deg, rgba(var(--kiaro-panel-rgb), 0.92), rgba(8, 10, 10, 0.94));
   box-shadow: 0 24px 80px rgba(0,0,0,.30);
   border-radius: 22px;
 }
@@ -61,7 +67,7 @@ button:disabled { cursor: not-allowed; }
 .glass-input {
   border: 1px solid var(--kiaro-line);
   background: rgba(255,255,255,.045);
-  color: #f3f4ef;
+  color: var(--kiaro-text-main);
   outline: none;
   border-radius: 18px;
   transition: border-color .18s ease, background .18s ease, box-shadow .18s ease;
@@ -76,10 +82,10 @@ button:disabled { cursor: not-allowed; }
 }
 
 .btn-primary {
-  border: 1px solid rgba(245,245,239,.9);
+  border: 1px solid var(--kiaro-accent);
   border-radius: 999px;
-  background: #f4f3ec;
-  color: #090b0b;
+  background: var(--kiaro-accent);
+  color: var(--kiaro-accent-contrast);
   font-weight: 800;
   letter-spacing: .01em;
   box-shadow: none;
@@ -319,4 +325,39 @@ button:disabled { cursor: not-allowed; }
 @keyframes projectDotPulse {
   0%, 100% { transform: scale(.9); opacity: .62; }
   50% { transform: scale(1.16); opacity: 1; }
+}
+
+
+html[data-card-style='flat'] .kiaro-card {
+  border-radius: 14px;
+  box-shadow: none;
+  background: rgba(var(--kiaro-panel-rgb), .78);
+}
+
+html[data-card-style='editorial'] .kiaro-card {
+  border-radius: 6px;
+  box-shadow: none;
+  background: rgba(var(--kiaro-panel-rgb), .88);
+}
+
+html[data-button-style='soft'] .btn-primary,
+html[data-button-style='soft'] .btn-ghost,
+html[data-button-style='soft'] .glass-input {
+  border-radius: 16px;
+}
+
+html[data-button-style='sharp'] .btn-primary,
+html[data-button-style='sharp'] .btn-ghost,
+html[data-button-style='sharp'] .glass-input {
+  border-radius: 4px;
+}
+
+html[data-background-mode='flat'] body,
+html[data-background-mode='flat'] {
+  background: var(--kiaro-bg-base);
+}
+
+html[data-background-mode='spotlight'] body,
+html[data-background-mode='spotlight'] {
+  background: radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--kiaro-accent) 13%, transparent), transparent 42%), var(--kiaro-bg-base);
 }

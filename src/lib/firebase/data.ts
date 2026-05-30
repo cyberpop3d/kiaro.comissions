@@ -1,4 +1,4 @@
-import type { Attachment, Conversation, HomeInterfaceConfig, Message, Offer, PaidProject, ProjectFinalFile, ProjectStatus, Sender } from '@/lib/types';
+import type { Attachment, ChatInterfaceConfig, Conversation, DesignConfig, HomeInterfaceConfig, Message, Offer, PaidProject, ProjectFinalFile, ProjectStatus, Sender } from '@/lib/types';
 import { getFirebaseAuth, getFirebaseDb } from '@/lib/firebase/client';
 import {
   addDoc,
@@ -23,6 +23,66 @@ import {
 } from 'firebase/firestore';
 import { GoogleAuthProvider, onAuthStateChanged, signInAnonymously, signInWithPopup, type User } from 'firebase/auth';
 import { uploadFiles as uploadThingFiles } from '@/utils/uploadthing';
+
+
+export const defaultChatConfig: ChatInterfaceConfig = {
+  projectConversationLabel: 'Project conversation',
+  generalUploadsTitle: 'General uploads',
+  generalUploadsDescription: 'Uploads made before selecting a project are collected here.',
+  newProjectButton: 'New project',
+  newProjectModalTitle: 'Start a project',
+  newProjectModalBody:
+    'We will discuss the project details inside this workspace. For now, choose a simple project name such as the character name or Project 1. After the scope is clear, Kiaro Studio will send a custom payment offer. Once payment is completed and manually confirmed, the final delivery area can be activated.',
+  projectNamePlaceholder: 'Project name, character name, or Project 1',
+  createProjectButton: 'Create project',
+  referencesTab: 'References',
+  filesTab: 'Files',
+  deliveryTab: 'Delivery',
+  offerTab: 'Offer',
+  messagePlaceholder: 'Type your message…',
+  dragHelp: 'Drag images, ZIP, STL, 3MF, OBJ, FBX or PDF files into the conversation.',
+  dropTitle: 'Drop to upload',
+  dropSingleFileText: 'Images, ZIP, STL, 3MF, OBJ, FBX and PDF files are supported.',
+  dropMultipleFilesText: 'files will be attached to this workspace.',
+  unsupportedFileText: 'This file type is not supported.',
+  noReferencesLabel: 'No references yet',
+  noFilesLabel: 'No files yet',
+  deliveryLockedTitle: 'Locked',
+  deliveryUnlockedTitle: 'Unlocked',
+  deliveryLockedBody: 'Final delivery is locked until Kiaro Studio confirms payment manually.',
+  deliveryUnlockedBody: 'Payment is confirmed. Final files appear here when Kiaro Studio uploads them.',
+  noFinalFilesLabel: 'No final files uploaded yet.',
+  offerPanelTitle: 'Send payment offer',
+  offerPanelHelper: 'Paste a Ko-fi or custom payment link. Sending an offer will mark the selected project as waiting for payment.',
+  offerNoProjectWarning: 'Create or select a project before sending a payment offer.',
+  offerAmountPlaceholder: 'Amount',
+  offerScopePlaceholder: 'Scope',
+  offerLinkPlaceholder: 'Ko-fi or payment link',
+  sendOfferButton: 'Send custom offer',
+  paymentConfirmedLabel: 'Payment confirmed',
+  waitingPaymentLabel: 'Waiting for payment confirmation',
+  guestKeyLabel: 'Guest key',
+  loadingWorkspace: 'Loading workspace…',
+  accessNeededTitle: 'Access needed',
+  accessNeededBody: 'This workspace requires a valid access key or admin access.',
+  fileAttachedBody: 'File attached.',
+  editImageButton: 'Edit',
+  addVariationTitle: 'Add variation to this image',
+  usernameModalTitle: 'Choose your username',
+  usernameModalBody: 'This name will appear in your Kiaro Studio commission conversation.',
+  usernamePlaceholder: 'Username / studio name',
+  saveUsernameButton: 'Save username',
+  laterButton: 'Later'
+};
+
+export const defaultDesignConfig: DesignConfig = {
+  palette: 'portfolio',
+  fontFamily: 'inter',
+  buttonStyle: 'pill',
+  cardStyle: 'soft',
+  accentColor: '#f4f3ec',
+  backgroundMode: 'subtle'
+};
 
 export const defaultHomeConfig: HomeInterfaceConfig = {
   eyebrow: 'Kiaro Studio commissions',
@@ -848,6 +908,45 @@ export async function saveHomeConfig(config: HomeInterfaceConfig) {
   const db = getFirebaseDb();
   await setDoc(
     doc(db, 'siteConfig', 'home'),
+    {
+      ...config,
+      updated_at: serverTimestamp()
+    },
+    { merge: true }
+  );
+}
+
+
+export function subscribeToChatConfig(callback: (config: ChatInterfaceConfig) => void): Unsubscribe {
+  const db = getFirebaseDb();
+  return onSnapshot(doc(db, 'siteConfig', 'chat'), (snapshot) => {
+    callback({ ...defaultChatConfig, ...(snapshot.exists() ? snapshot.data() : {}) } as ChatInterfaceConfig);
+  });
+}
+
+export async function saveChatConfig(config: ChatInterfaceConfig) {
+  const db = getFirebaseDb();
+  await setDoc(
+    doc(db, 'siteConfig', 'chat'),
+    {
+      ...config,
+      updated_at: serverTimestamp()
+    },
+    { merge: true }
+  );
+}
+
+export function subscribeToDesignConfig(callback: (config: DesignConfig) => void): Unsubscribe {
+  const db = getFirebaseDb();
+  return onSnapshot(doc(db, 'siteConfig', 'design'), (snapshot) => {
+    callback({ ...defaultDesignConfig, ...(snapshot.exists() ? snapshot.data() : {}) } as DesignConfig);
+  });
+}
+
+export async function saveDesignConfig(config: DesignConfig) {
+  const db = getFirebaseDb();
+  await setDoc(
+    doc(db, 'siteConfig', 'design'),
     {
       ...config,
       updated_at: serverTimestamp()

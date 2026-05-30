@@ -6,11 +6,15 @@ import {
   createPaidProjectRequest,
   deleteAttachmentPermanently,
   deletePaidProjectFinalFile,
+  defaultChatConfig,
+  defaultDesignConfig,
   markOfferPaid,
   saveAnnotationRecord,
   sendOfferMessage,
   sendTextMessage,
   subscribeToConversation,
+  subscribeToChatConfig,
+  subscribeToDesignConfig,
   subscribeToMessages,
   subscribeToPaidProjects,
   updatePaidProjectStatus,
@@ -18,8 +22,9 @@ import {
   uploadPaidProjectFinalFile,
   verifyAccess
 } from '@/lib/firebase/data';
-import type { Attachment, Conversation, Message, PaidProject, ProjectFinalFile, ProjectStatus } from '@/lib/types';
+import type { Attachment, ChatInterfaceConfig, Conversation, DesignConfig, Message, PaidProject, ProjectFinalFile, ProjectStatus } from '@/lib/types';
 import { normalizePaymentUrl } from '@/utils/links';
+import { applyDesignConfig } from '@/utils/design';
 import {
   CheckCircle2,
   ChevronDown,
@@ -155,13 +160,15 @@ function ImageLibraryCard({
   variants,
   onAnnotate,
   onAddVariation,
-  onDelete
+  onDelete,
+  config
 }: {
   attachment: Attachment;
   variants: Attachment[];
   onAnnotate: (attachment: Attachment) => void;
   onAddVariation: (attachment: Attachment) => void;
   onDelete?: (attachment: Attachment, includeBranches?: boolean) => void;
+  config: ChatInterfaceConfig;
 }) {
   const previewVariants = variants.slice(0, 4);
 
@@ -185,9 +192,9 @@ function ImageLibraryCard({
       <div className="mt-3 min-w-0 truncate text-sm font-semibold text-kiaro-text/90">{attachment.file_name}</div>
       <div className="mt-3 flex gap-2">
         <button type="button" onClick={() => onAnnotate(attachment)} className="btn-ghost flex flex-1 items-center justify-center gap-2 px-3 py-2 text-xs font-bold">
-          <Wand2 size={14} /> Edit
+          <Wand2 size={14} /> {config.editImageButton}
         </button>
-        <button type="button" onClick={() => onAddVariation(attachment)} title="Add variation to this image" className="btn-ghost grid h-9 w-10 place-items-center">
+        <button type="button" onClick={() => onAddVariation(attachment)} title={config.addVariationTitle} className="btn-ghost grid h-9 w-10 place-items-center">
           <Plus size={16} />
         </button>
         {onDelete ? (
@@ -238,22 +245,20 @@ function formatMessageTime(value: string) {
   return new Date(value).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-function getMessageBody(message: Message) {
-  if (message.type === 'attachment') return 'File attached.';
+function getMessageBody(message: Message, config: ChatInterfaceConfig) {
+  if (message.type === 'attachment') return config.fileAttachedBody;
   if (!message.body) return '';
-  if (/customer uploaded a file/i.test(message.body)) return 'File attached.';
-  if (/kiaro studio uploaded a file/i.test(message.body)) return 'File attached.';
+  if (/customer uploaded a file/i.test(message.body)) return config.fileAttachedBody;
+  if (/kiaro studio uploaded a file/i.test(message.body)) return config.fileAttachedBody;
   return message.body;
 }
 
-function NewProjectModal({ title, setTitle, busy, onCreate, onClose }: { title: string; setTitle: (title: string) => void; busy: boolean; onCreate: () => void; onClose: () => void }) {
+function NewProjectModal({ title, setTitle, busy, onCreate, onClose, config }: { title: string; setTitle: (title: string) => void; busy: boolean; onCreate: () => void; onClose: () => void; config: ChatInterfaceConfig }) {
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 px-5 backdrop-blur-sm">
       <div className="kiaro-card w-full max-w-lg p-6">
-        <h2 className="font-display text-3xl font-black">Start a project</h2>
-        <p className="mt-3 text-sm leading-6 text-kiaro-muted">
-          We will discuss the project details inside this workspace. For now, choose a simple project name such as the character name or Project 1. After the scope is clear, Kiaro Studio will send a custom payment offer. Once payment is completed and manually confirmed, the final delivery area can be activated.
-        </p>
+        <h2 className="font-display text-3xl font-black">{config.newProjectModalTitle}</h2>
+        <p className="mt-3 text-sm leading-6 text-kiaro-muted">{config.newProjectModalBody}</p>
         <input
           className="glass-input mt-5 w-full px-4 py-4"
           value={title}
@@ -261,10 +266,10 @@ function NewProjectModal({ title, setTitle, busy, onCreate, onClose }: { title: 
           onKeyDown={(event) => {
             if (event.key === 'Enter') onCreate();
           }}
-          placeholder="Project name, character name, or Project 1"
+          placeholder={config.projectNamePlaceholder}
         />
         <div className="mt-4 flex gap-3">
-          <button className="btn-primary flex-1 px-5 py-3 text-sm" disabled={busy} onClick={onCreate}>Create project</button>
+          <button className="btn-primary flex-1 px-5 py-3 text-sm" disabled={busy} onClick={onCreate}>{config.createProjectButton}</button>
           <button className="btn-ghost px-5 py-3 text-sm font-bold" onClick={onClose}>Cancel</button>
         </div>
       </div>
@@ -280,7 +285,8 @@ function ProjectSwitcher({
   onNewProject,
   role,
   statsByScope,
-  unreadByScope
+  unreadByScope,
+  config
 }: {
   projects: PaidProject[];
   currentProject?: PaidProject | null;
@@ -290,11 +296,12 @@ function ProjectSwitcher({
   role: 'customer' | 'admin';
   statsByScope: Record<string, ProjectContentStats>;
   unreadByScope: Record<string, number>;
+  config: ChatInterfaceConfig;
 }) {
   const [open, setOpen] = useState(false);
   const selectedScopeId = selectedProjectId || GENERAL_SCOPE_ID;
   const activeStats = statsByScope[selectedScopeId] || emptyStats();
-  const activeTitle = currentProject?.title || 'General uploads';
+  const activeTitle = currentProject?.title || config.generalUploadsTitle;
   const activeUnread = unreadByScope[selectedScopeId] || 0;
   const generalStats = statsByScope[GENERAL_SCOPE_ID] || emptyStats();
   const generalUnread = unreadByScope[GENERAL_SCOPE_ID] || 0;
@@ -316,7 +323,7 @@ function ProjectSwitcher({
         <div className="min-w-0">
           <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-kiaro-muted">Active workspace</div>
           <h2 className="mt-1 truncate font-display text-2xl font-black">{activeTitle}</h2>
-          <p className="mt-2 text-xs leading-5 text-kiaro-muted">{currentProject ? statusCopy(currentProject.status).description : 'References and files uploaded before a project is selected stay here.'}</p>
+          <p className="mt-2 text-xs leading-5 text-kiaro-muted">{currentProject ? statusCopy(currentProject.status).description : config.generalUploadsDescription}</p>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-[0.14em] text-kiaro-muted">
             <span>{summarizeStats(activeStats)}</span>
             {activeUnread ? <span className="rounded-full border border-white/15 px-2 py-1 text-kiaro-text">{activeUnread} new</span> : null}
@@ -327,7 +334,7 @@ function ProjectSwitcher({
 
       <div className="mt-4 flex gap-2">
         <button type="button" onClick={onNewProject} className="btn-primary flex flex-1 items-center justify-center gap-2 px-4 py-3 text-xs font-black">
-          <FolderPlus size={15} /> New project
+          <FolderPlus size={15} /> {config.newProjectButton}
         </button>
         {projects.length || generalStats.total ? (
           <button type="button" onClick={() => setOpen(!open)} className={cx('btn-ghost relative grid h-11 w-11 place-items-center', Object.entries(unreadByScope).some(([key, value]) => key !== selectedScopeId && value > 0) && 'project-standby-dot')} title="Switch project">
@@ -347,7 +354,7 @@ function ProjectSwitcher({
             className={rowClasses(GENERAL_SCOPE_ID)}
           >
             <div className="flex items-center justify-between gap-3">
-              <span className="min-w-0 truncate text-sm font-bold">General uploads</span>
+              <span className="min-w-0 truncate text-sm font-bold">{config.generalUploadsTitle}</span>
               {generalUnread && selectedScopeId !== GENERAL_SCOPE_ID ? <span className="inline-flex items-center gap-1 rounded-full border border-white/18 px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em]"><Radio size={11} /> {generalUnread} new</span> : null}
             </div>
             <div className="mt-2 text-[11px] font-bold uppercase tracking-[0.14em] text-kiaro-muted">{summarizeStats(generalStats)}</div>
@@ -361,7 +368,7 @@ function ProjectSwitcher({
                 setOpen(false);
               }}
               className={rowClasses(project.id, project.status === 'active' || project.status === 'closed')}
-              title={project.status === 'offer_sent' ? 'Waiting for payment confirmation' : undefined}
+              title={project.status === 'offer_sent' ? config.waitingPaymentLabel : undefined}
             >
               <div className="flex items-center justify-between gap-3">
                 <span className="min-w-0 truncate text-sm font-bold">{project.title}</span>
@@ -391,7 +398,8 @@ function ReferencesPanel({
   onAnnotate,
   onAddVariation,
   onDelete,
-  role
+  role,
+  config
 }: {
   mainImages: Attachment[];
   variantsByParent: Record<string, Attachment[]>;
@@ -399,6 +407,7 @@ function ReferencesPanel({
   onAddVariation: (attachment: Attachment) => void;
   onDelete: (attachment: Attachment, includeBranches?: boolean) => void;
   role: 'customer' | 'admin';
+  config: ChatInterfaceConfig;
 }) {
   return (
     <div className="grid gap-3">
@@ -411,16 +420,17 @@ function ReferencesPanel({
             onAnnotate={onAnnotate}
             onAddVariation={onAddVariation}
             onDelete={role === 'admin' ? onDelete : undefined}
+            config={config}
           />
         ))
       ) : (
-        <EmptyLibraryCard icon={Images} label="No references yet" />
+        <EmptyLibraryCard icon={Images} label={config.noReferencesLabel} />
       )}
     </div>
   );
 }
 
-function FilesPanel({ fileAttachments, onDelete, deletingId, role }: { fileAttachments: Attachment[]; onDelete: (attachment: Attachment, includeBranches?: boolean) => void; deletingId?: string | null; role: 'customer' | 'admin' }) {
+function FilesPanel({ fileAttachments, onDelete, deletingId, role, config }: { fileAttachments: Attachment[]; onDelete: (attachment: Attachment, includeBranches?: boolean) => void; deletingId?: string | null; role: 'customer' | 'admin'; config: ChatInterfaceConfig }) {
   return (
     <div className="grid gap-3">
       {fileAttachments.length ? (
@@ -447,7 +457,7 @@ function FilesPanel({ fileAttachments, onDelete, deletingId, role }: { fileAttac
           </div>
         ))
       ) : (
-        <EmptyLibraryCard icon={FileArchive} label="No files yet" />
+        <EmptyLibraryCard icon={FileArchive} label={config.noFilesLabel} />
       )}
     </div>
   );
@@ -460,7 +470,8 @@ function DeliveryPanel({
   onClose,
   onUploadFinal,
   onDeleteFinal,
-  working
+  working,
+  config
 }: {
   role: 'customer' | 'admin';
   project?: PaidProject | null;
@@ -469,6 +480,7 @@ function DeliveryPanel({
   onUploadFinal: (project: PaidProject) => void;
   onDeleteFinal: (project: PaidProject, file: ProjectFinalFile) => void;
   working?: boolean;
+  config: ChatInterfaceConfig;
 }) {
   if (!project) {
     return <EmptyLibraryCard icon={Lock} label="Create a project first" />;
@@ -482,13 +494,13 @@ function DeliveryPanel({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-kiaro-muted">Delivery</div>
-          <h3 className="mt-1 truncate font-display text-xl font-black">{paid ? 'Unlocked' : 'Locked'}</h3>
+          <h3 className="mt-1 truncate font-display text-xl font-black">{paid ? config.deliveryUnlockedTitle : config.deliveryLockedTitle}</h3>
         </div>
         {paid ? <CheckCircle2 className="text-kiaro-lime" size={20} /> : <Lock className="text-kiaro-muted" size={20} />}
       </div>
 
       <p className="mt-3 text-xs leading-5 text-kiaro-muted">
-        {paid ? 'Payment is confirmed. Final files appear here when Kiaro Studio uploads them.' : 'Final delivery is locked until Kiaro Studio confirms payment manually.'}
+        {paid ? config.deliveryUnlockedBody : config.deliveryLockedBody}
       </p>
 
       {paid || role === 'admin' ? (
@@ -511,7 +523,7 @@ function DeliveryPanel({
               </div>
             ))
           ) : (
-            <div className="rounded-2xl border border-dashed border-white/10 bg-black/15 p-4 text-center text-xs text-kiaro-muted">No final files uploaded yet.</div>
+            <div className="rounded-2xl border border-dashed border-white/10 bg-black/15 p-4 text-center text-xs text-kiaro-muted">{config.noFinalFilesLabel}</div>
           )}
         </div>
       ) : null}
@@ -547,6 +559,8 @@ export function ConversationView({
   accessKeyBanner?: boolean;
 }) {
   const [conversation, setConversation] = useState<Conversation | null>(null);
+  const [chatConfig, setChatConfig] = useState<ChatInterfaceConfig>(defaultChatConfig);
+  const [designConfig, setDesignConfig] = useState<DesignConfig>(defaultDesignConfig);
   const [messages, setMessages] = useState<Message[]>([]);
   const [projects, setProjects] = useState<PaidProject[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -576,6 +590,19 @@ export function ConversationView({
   const variationInputRef = useRef<HTMLInputElement | null>(null);
   const finalFileInputRef = useRef<HTMLInputElement | null>(null);
   const dragDepthRef = useRef(0);
+
+  useEffect(() => {
+    const unsubscribeChat = subscribeToChatConfig(setChatConfig);
+    const unsubscribeDesign = subscribeToDesignConfig(setDesignConfig);
+    return () => {
+      unsubscribeChat();
+      unsubscribeDesign();
+    };
+  }, []);
+
+  useEffect(() => {
+    applyDesignConfig(designConfig);
+  }, [designConfig]);
 
   useEffect(() => {
     try {
@@ -959,23 +986,23 @@ export function ConversationView({
   if (!accessOk) {
     return (
       <div className="kiaro-card p-8">
-        <h1 className="font-display text-3xl font-black">Access needed</h1>
-        <p className="mt-3 text-sm leading-6 text-kiaro-muted">This workspace requires a valid access key or admin access.</p>
+        <h1 className="font-display text-3xl font-black">{chatConfig.accessNeededTitle}</h1>
+        <p className="mt-3 text-sm leading-6 text-kiaro-muted">{chatConfig.accessNeededBody}</p>
       </div>
     );
   }
 
   const panelTabs: Array<{ id: typeof panelTab; label: string }> = role === 'admin'
     ? [
-        { id: 'references', label: 'References' },
-        { id: 'files', label: 'Files' },
-        { id: 'delivery', label: 'Delivery' },
-        { id: 'offer', label: 'Offer' }
+        { id: 'references', label: chatConfig.referencesTab },
+        { id: 'files', label: chatConfig.filesTab },
+        { id: 'delivery', label: chatConfig.deliveryTab },
+        { id: 'offer', label: chatConfig.offerTab }
       ]
     : [
-        { id: 'references', label: 'References' },
-        { id: 'files', label: 'Files' },
-        { id: 'delivery', label: 'Delivery' }
+        { id: 'references', label: chatConfig.referencesTab },
+        { id: 'files', label: chatConfig.filesTab },
+        { id: 'delivery', label: chatConfig.deliveryTab }
       ];
 
   return (
@@ -991,9 +1018,9 @@ export function ConversationView({
           <div className={cx('drag-upload-overlay', dragRejected && 'drag-upload-overlay-rejected')}>
             <div className="drag-upload-panel">
               <UploadCloud size={34} />
-              <div className="mt-4 font-display text-2xl font-black">Drop to upload</div>
+              <div className="mt-4 font-display text-2xl font-black">{chatConfig.dropTitle}</div>
               <p className="mt-2 text-sm text-kiaro-muted">
-                {dragRejected ? 'This file type is not supported.' : dragFileCount > 1 ? `${dragFileCount} files will be attached to this workspace.` : 'Images, ZIP, STL, 3MF, OBJ, FBX and PDF files are supported.'}
+                {dragRejected ? chatConfig.unsupportedFileText : dragFileCount > 1 ? `${dragFileCount} ${chatConfig.dropMultipleFilesText}` : chatConfig.dropSingleFileText}
               </p>
             </div>
           </div>
@@ -1002,22 +1029,22 @@ export function ConversationView({
         <div className="border-b border-white/10 p-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0">
-              <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-kiaro-muted">Project conversation</div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-kiaro-muted">{chatConfig.projectConversationLabel}</div>
               <h1 className="mt-1 truncate font-display text-3xl font-black">{workspaceTitle}</h1>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 {currentProject ? <StatusPill status={currentProject.status} /> : <span className="rounded-full border border-white/12 bg-white/[0.035] px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-kiaro-muted">General</span>}
-                <span className="text-xs text-kiaro-muted">{currentProject ? statusCopy(currentProject.status).description : 'Uploads made before selecting a project are collected here.'}</span>
+                <span className="text-xs text-kiaro-muted">{currentProject ? statusCopy(currentProject.status).description : chatConfig.generalUploadsDescription}</span>
               </div>
             </div>
             <div className="flex items-center gap-2">
               {accessKeyBanner && accessKey ? (
                 <div className="rounded-2xl border border-white/12 bg-white/[0.035] px-4 py-3 text-right" title="Save this key to continue this guest workspace later.">
-                  <div className="text-[10px] uppercase tracking-[0.24em] text-kiaro-muted">Guest key</div>
+                  <div className="text-[10px] uppercase tracking-[0.24em] text-kiaro-muted">{chatConfig.guestKeyLabel}</div>
                   <div className="font-display text-base font-black text-kiaro-text">{accessKey}</div>
                 </div>
               ) : null}
               <button type="button" onClick={() => setProjectModalOpen(true)} className="btn-primary px-5 py-3 text-xs font-black">
-                New project
+                {chatConfig.newProjectButton}
               </button>
             </div>
           </div>
@@ -1025,11 +1052,11 @@ export function ConversationView({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
-          {loading ? <p className="text-kiaro-muted">Loading workspace…</p> : null}
+          {loading ? <p className="text-kiaro-muted">{chatConfig.loadingWorkspace}</p> : null}
           <div className="space-y-4">
             {messages.map((message) => {
               const mine = message.sender === role;
-              const displayBody = getMessageBody(message);
+              const displayBody = getMessageBody(message, chatConfig);
               return (
                 <div key={message.id} className={cx('flex', mine ? 'justify-end' : 'justify-start')}>
                   <div className={cx('max-w-[82%] rounded-3xl border p-4', mine ? 'border-white/16 bg-white/[0.075]' : 'border-white/10 bg-white/[0.04]')}>
@@ -1070,7 +1097,7 @@ export function ConversationView({
             </label>
             <textarea
               className="glass-input min-h-12 flex-1 resize-none px-4 py-3 text-sm"
-              placeholder="Type your message…"
+              placeholder={chatConfig.messagePlaceholder}
               value={body}
               onChange={(e) => setBody(e.target.value)}
               onKeyDown={(e) => {
@@ -1084,7 +1111,7 @@ export function ConversationView({
               <Send size={18} />
             </button>
           </div>
-          <div className="mt-2 text-xs text-kiaro-muted">{deletingId ? 'Permanently deleting file…' : uploading ? 'Uploading file…' : 'Drag images, ZIP, STL, 3MF, OBJ, FBX or PDF files into the conversation.'}</div>
+          <div className="mt-2 text-xs text-kiaro-muted">{deletingId ? 'Permanently deleting file…' : uploading ? 'Uploading file…' : chatConfig.dragHelp}</div>
         </div>
       </section>
 
@@ -1098,6 +1125,7 @@ export function ConversationView({
           role={role}
           statsByScope={statsByScope}
           unreadByScope={unreadByScope}
+          config={chatConfig}
         />
 
         <div className="kiaro-card p-5">
@@ -1116,10 +1144,10 @@ export function ConversationView({
 
           <div className="mt-5">
             {panelTab === 'references' ? (
-              <ReferencesPanel mainImages={mainImages} variantsByParent={imageVariantsByParent} onAnnotate={setAnnotating} onAddVariation={addVariation} onDelete={deleteAttachment} role={role} />
+              <ReferencesPanel mainImages={mainImages} variantsByParent={imageVariantsByParent} onAnnotate={setAnnotating} onAddVariation={addVariation} onDelete={deleteAttachment} role={role} config={chatConfig} />
             ) : null}
 
-            {panelTab === 'files' ? <FilesPanel fileAttachments={fileAttachments} onDelete={deleteAttachment} deletingId={deletingId} role={role} /> : null}
+            {panelTab === 'files' ? <FilesPanel fileAttachments={fileAttachments} onDelete={deleteAttachment} deletingId={deletingId} role={role} config={chatConfig} /> : null}
 
             {panelTab === 'delivery' ? (
               <DeliveryPanel
@@ -1130,19 +1158,20 @@ export function ConversationView({
                 onUploadFinal={openFinalUpload}
                 onDeleteFinal={deleteFinalFile}
                 working={Boolean(projectWorkingId && currentProject?.id === projectWorkingId)}
+                config={chatConfig}
               />
             ) : null}
 
             {panelTab === 'offer' && role === 'admin' ? (
               <div>
-                <h2 className="font-display text-xl font-black">Send payment offer</h2>
-                <p className="mt-2 text-sm leading-6 text-kiaro-muted">Paste a Ko-fi or custom payment link. Sending an offer will mark the selected project as waiting for payment.</p>
-                {!currentProject ? <div className="mt-4 rounded-2xl border border-amber-200/20 bg-amber-300/10 p-4 text-xs text-amber-100">Create or select a project before sending a payment offer.</div> : null}
+                <h2 className="font-display text-xl font-black">{chatConfig.offerPanelTitle}</h2>
+                <p className="mt-2 text-sm leading-6 text-kiaro-muted">{chatConfig.offerPanelHelper}</p>
+                {!currentProject ? <div className="mt-4 rounded-2xl border border-amber-200/20 bg-amber-300/10 p-4 text-xs text-amber-100">{chatConfig.offerNoProjectWarning}</div> : null}
                 <div className="mt-4 space-y-3">
-                  <input className="glass-input w-full px-4 py-3" value={offerAmount} onChange={(e) => setOfferAmount(e.target.value)} placeholder="Amount" />
-                  <textarea className="glass-input min-h-24 w-full px-4 py-3" value={offerScope} onChange={(e) => setOfferScope(e.target.value)} placeholder="Scope" />
-                  <input className="glass-input w-full px-4 py-3" value={offerUrl} onChange={(e) => setOfferUrl(e.target.value)} placeholder="Ko-fi or payment link" />
-                  <button className="btn-primary w-full px-5 py-3 text-sm" disabled={!currentProject} onClick={sendOffer}>Send custom offer</button>
+                  <input className="glass-input w-full px-4 py-3" value={offerAmount} onChange={(e) => setOfferAmount(e.target.value)} placeholder={chatConfig.offerAmountPlaceholder} />
+                  <textarea className="glass-input min-h-24 w-full px-4 py-3" value={offerScope} onChange={(e) => setOfferScope(e.target.value)} placeholder={chatConfig.offerScopePlaceholder} />
+                  <input className="glass-input w-full px-4 py-3" value={offerUrl} onChange={(e) => setOfferUrl(e.target.value)} placeholder={chatConfig.offerLinkPlaceholder} />
+                  <button className="btn-primary w-full px-5 py-3 text-sm" disabled={!currentProject} onClick={sendOffer}>{chatConfig.sendOfferButton}</button>
                 </div>
               </div>
             ) : null}
@@ -1184,7 +1213,7 @@ export function ConversationView({
 
       {annotating?.signed_url ? <AnnotationModal imageUrl={annotating.signed_url} fileName={annotating.file_name} onClose={() => setAnnotating(null)} onSave={saveAnnotation} /> : null}
 
-      {projectModalOpen ? <NewProjectModal title={projectTitle} setTitle={setProjectTitle} busy={creatingProject} onCreate={createProject} onClose={() => setProjectModalOpen(false)} /> : null}
+      {projectModalOpen ? <NewProjectModal title={projectTitle} setTitle={setProjectTitle} busy={creatingProject} onCreate={createProject} onClose={() => setProjectModalOpen(false)} config={chatConfig} /> : null}
     </div>
   );
 }
