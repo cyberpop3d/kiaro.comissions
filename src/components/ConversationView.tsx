@@ -10,9 +10,16 @@ function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(' ');
 }
 
-function getAccessHeaders(role: 'customer' | 'admin', accessKey?: string | null, adminSecret?: string | null) {
-  if (role === 'admin') return { 'x-admin-secret': adminSecret || '' };
-  return { 'x-access-key': accessKey || '' };
+function getAccessHeaders(
+  role: 'customer' | 'admin',
+  accessKey?: string | null,
+  adminSecret?: string | null
+): Record<string, string> {
+  if (role === 'admin') {
+    return { 'x-admin-secret': adminSecret ?? '' };
+  }
+
+  return { 'x-access-key': accessKey ?? '' };
 }
 
 function AttachmentPreview({
