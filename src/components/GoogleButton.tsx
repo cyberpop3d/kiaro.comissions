@@ -1,16 +1,27 @@
 'use client';
 
-import { signInWithGoogle } from '@/lib/firebase/data';
+import { getOrCreateGoogleConversation } from '@/lib/firebase/data';
+import { ArrowRight } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 
-export function GoogleButton() {
+export function GoogleButton({ label = 'Sign in with Google', className = '' }: { label?: string; className?: string }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+
   async function login() {
-    await signInWithGoogle();
-    window.location.reload();
+    setBusy(true);
+    try {
+      const result = await getOrCreateGoogleConversation();
+      router.push(`/chat/${result.conversationId}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
-    <button type="button" onClick={login} className="btn-ghost px-5 py-3 text-sm font-bold">
-      Continue with Google
+    <button type="button" disabled={busy} onClick={login} className={`btn-primary inline-flex items-center justify-center gap-2 px-6 py-4 text-sm font-black ${className}`}>
+      {busy ? 'Opening…' : label} <ArrowRight size={16} />
     </button>
   );
 }

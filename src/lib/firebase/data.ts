@@ -1,8 +1,38 @@
-import type { Attachment, Conversation, Message, Offer } from '@/lib/types';
+import type { Attachment, Conversation, HomeInterfaceConfig, Message, Offer } from '@/lib/types';
 import { getFirebaseAuth, getFirebaseDb, getFirebaseStorage } from '@/lib/firebase/client';
-import { addDoc, collection, deleteDoc, doc, getDoc, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, updateDoc, where, type DocumentData, type QueryDocumentSnapshot, type Unsubscribe } from 'firebase/firestore';
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where,
+  type DocumentData,
+  type QueryDocumentSnapshot,
+  type Unsubscribe
+} from 'firebase/firestore';
 import { GoogleAuthProvider, onAuthStateChanged, signInAnonymously, signInWithPopup, type User } from 'firebase/auth';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+
+export const defaultHomeConfig: HomeInterfaceConfig = {
+  eyebrow: 'Private commission portal',
+  title: 'Commission requests, references and project files for Kiaro Studio.',
+  subtitle:
+    'Use Google sign-in for a persistent project thread, or continue without registration and save your access key so you do not lose the conversation.',
+  googleButton: 'Sign in with Google',
+  guestButton: 'Continue without registration',
+  guestTitle: 'Choose a username',
+  guestHelper: 'This name will appear in the conversation so Kiaro Studio can identify your request.',
+  accessHelper: 'Already have an access key? Resume an existing guest conversation.'
+};
 
 function nowIso() {
   return new Date().toISOString();
@@ -19,6 +49,17 @@ export function generateAccessKey() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const block = () => Array.from({ length: 4 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('');
   return `KIA-${block()}-${block()}`;
+}
+
+export function waitForAuthUser(): Promise<User | null> {
+  const auth = getFirebaseAuth();
+  return new Promise((resolve) => {
+    let unsubscribe: () => void = () => undefined;
+    unsubscribe = onAuthStateChanged(auth, (user) => {
+      unsubscribe();
+      resolve(user);
+    });
+  });
 }
 
 export async function ensureAnonymousUser(): Promise<User> {
@@ -65,8 +106,15 @@ function normalizeAccessKey(accessKey: string) {
   return accessKey.trim().toUpperCase();
 }
 
-export async function startConversation(input: { name?: string; email?: string }) {
-  const user = await ensureAnonymousUser();
+function safeNameValue(value?: string | null) {
+  return (value || '').trim().slice(0, 100) || null;
+}
+
+function safeEmailValue(value?: string | null) {
+  return (value || '').trim().slice(0, 160) || null;
+}
+
+async function createConversationForUser(user: User, input: { name?: string | null; email?: string | null; googleOwned?: boolean }) {
   const db = getFirebaseDb();
   let accessKey = generateAccessKey();
   let keyRef = doc(db, 'guestSessions', accessKey);
@@ -78,11 +126,12 @@ export async function startConversation(input: { name?: string; email?: string }
     keyRef = doc(db, 'guestSessions', accessKey);
   }
 
-  const safeName = (input.name || '').trim().slice(0, 100) || null;
-  const safeEmail = (input.email || '').trim().slice(0, 160) || null;
+  const safeName = safeNameValue(input.name);
+  const safeEmail = safeEmailValue(input.email);
+  const title = safeName ? `${safeName} · Custom request` : input.googleOwned ? 'Google customer · Custom request' : 'Guest custom request';
 
   const conversationRef = await addDoc(collection(db, 'conversations'), {
-    title: safeName ? `${safeName} · Custom request` : 'Guest custom request',
+    title,
     status: 'open',
     guest: {
       name: safeName,
@@ -90,6 +139,7 @@ export async function startConversation(input: { name?: string; email?: string }
       access_key: accessKey
     },
     owner_uid: user.uid,
+    auth_mode: input.googleOwned ? 'google' : 'guest',
     created_at: serverTimestamp(),
     updated_at: serverTimestamp()
   });
@@ -108,11 +158,49 @@ export async function startConversation(input: { name?: string; email?: string }
     conversation_id: conversationRef.id,
     sender: 'system',
     type: 'system',
-    body: `Conversation started. Save this access key: ${accessKey}`,
+    body: input.googleOwned
+      ? 'Conversation started with Google sign-in.'
+      : `Conversation started. Save this access key: ${accessKey}`,
     created_at: serverTimestamp()
   });
 
   return { conversationId: conversationRef.id, accessKey };
+}
+
+export async function startConversation(input: { name?: string; email?: string }) {
+  const user = await ensureAnonymousUser();
+  return createConversationForUser(user, { ...input, googleOwned: !user.isAnonymous });
+}
+
+export async function getOrCreateGoogleConversation() {
+  const auth = getFirebaseAuth();
+  let user = auth.currentUser;
+  if (!user || user.isAnonymous) {
+    const result = await signInWithGoogle();
+    user = result.user;
+  }
+
+  const db = getFirebaseDb();
+  const q = query(collection(db, 'conversations'), where('owner_uid', '==', user.uid), limit(10));
+  const snapshot = await getDocs(q);
+  const existing = snapshot.docs
+    .map((docSnap) => ({ docSnap, updatedAt: timestampToIso(docSnap.data().updated_at) }))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.docSnap;
+
+  if (existing) {
+    const guest = existing.data().guest || {};
+    const key = String(guest.access_key || '');
+    if (key) localStorage.setItem('kiaro.accessKey', key);
+    localStorage.setItem('kiaro.conversationId', existing.id);
+    return { conversationId: existing.id, accessKey: key };
+  }
+
+  const name = user.displayName || '';
+  const email = user.email || '';
+  const created = await createConversationForUser(user, { name, email, googleOwned: true });
+  localStorage.setItem('kiaro.conversationId', created.conversationId);
+  localStorage.setItem('kiaro.accessKey', created.accessKey);
+  return created;
 }
 
 export async function resumeConversation(accessKey: string) {
@@ -129,21 +217,25 @@ export async function resumeConversation(accessKey: string) {
   return { conversationId: String(data.conversation_id), accessKey: normalized };
 }
 
-function mapConversation(snap: QueryDocumentSnapshot<DocumentData>): Conversation {
-  const data = snap.data();
+function mapConversationData(id: string, data: DocumentData): Conversation {
   const guest = data.guest || {};
   return {
-    id: snap.id,
+    id,
     title: String(data.title || 'Conversation'),
     status: (data.status || 'open') as Conversation['status'],
     created_at: timestampToIso(data.created_at),
     updated_at: timestampToIso(data.updated_at),
+    owner_uid: data.owner_uid ? String(data.owner_uid) : null,
     guest_sessions: {
       name: guest.name ?? null,
       email: guest.email ?? null,
       access_key: guest.access_key ?? undefined
     }
   };
+}
+
+function mapConversation(snap: QueryDocumentSnapshot<DocumentData>): Conversation {
+  return mapConversationData(snap.id, snap.data());
 }
 
 function mapOffer(raw: DocumentData | undefined): Offer | null {
@@ -174,7 +266,8 @@ function mapAttachment(raw: DocumentData | undefined): Attachment | null {
     size_bytes: raw.size_bytes ? Number(raw.size_bytes) : null,
     kind: (raw.kind || 'file') as Attachment['kind'],
     created_at: timestampToIso(raw.created_at),
-    signed_url: raw.signed_url ? String(raw.signed_url) : null
+    signed_url: raw.signed_url ? String(raw.signed_url) : null,
+    parent_attachment_id: raw.parent_attachment_id ? String(raw.parent_attachment_id) : null
   };
 }
 
@@ -202,6 +295,13 @@ export function subscribeToMessages(conversationId: string, callback: (messages:
   });
 }
 
+export function subscribeToConversation(conversationId: string, callback: (conversation: Conversation | null) => void): Unsubscribe {
+  const db = getFirebaseDb();
+  return onSnapshot(doc(db, 'conversations', conversationId), (snapshot) => {
+    callback(snapshot.exists() ? mapConversationData(snapshot.id, snapshot.data()) : null);
+  });
+}
+
 export function subscribeToConversations(callback: (conversations: Conversation[]) => void): Unsubscribe {
   const db = getFirebaseDb();
   const q = query(collection(db, 'conversations'), orderBy('updated_at', 'desc'), limit(200));
@@ -210,10 +310,54 @@ export function subscribeToConversations(callback: (conversations: Conversation[
   });
 }
 
-export async function verifyAccess(conversationId: string, accessKey: string) {
+export async function verifyAccess(conversationId: string, accessKey?: string | null) {
+  const auth = getFirebaseAuth();
+  const user = auth.currentUser || (await waitForAuthUser());
   const db = getFirebaseDb();
+  const conversationSnap = await getDoc(doc(db, 'conversations', conversationId));
+
+  if (conversationSnap.exists() && user && conversationSnap.data().owner_uid === user.uid) {
+    return true;
+  }
+
+  if (!accessKey) return false;
   const snap = await getDoc(doc(db, 'guestSessions', normalizeAccessKey(accessKey)));
   return snap.exists() && snap.data().conversation_id === conversationId;
+}
+
+export async function updateConversationProfile(conversationId: string, input: { name?: string | null; email?: string | null }) {
+  const db = getFirebaseDb();
+  const safeName = safeNameValue(input.name);
+  const safeEmail = safeEmailValue(input.email);
+  const conversationRef = doc(db, 'conversations', conversationId);
+  const snapshot = await getDoc(conversationRef);
+  const currentGuest = snapshot.exists() ? snapshot.data().guest || {} : {};
+  const nextGuest = {
+    ...currentGuest,
+    name: safeName,
+    email: safeEmail ?? currentGuest.email ?? null
+  };
+
+  await updateDoc(conversationRef, {
+    title: safeName ? `${safeName} · Custom request` : 'Custom request',
+    guest: nextGuest,
+    updated_at: serverTimestamp()
+  });
+
+  if (nextGuest.access_key) {
+    await setDoc(
+      doc(db, 'guestSessions', String(nextGuest.access_key)),
+      {
+        access_key: nextGuest.access_key,
+        conversation_id: conversationId,
+        owner_uid: snapshot.exists() ? snapshot.data().owner_uid || null : null,
+        name: safeName,
+        email: nextGuest.email ?? null,
+        updated_at: serverTimestamp()
+      },
+      { merge: true }
+    );
+  }
 }
 
 export async function sendTextMessage(conversationId: string, sender: Message['sender'], body: string) {
@@ -236,12 +380,19 @@ export async function sendTextMessage(conversationId: string, sender: Message['s
   });
 }
 
-export function kindFromFile(file: File): Attachment['kind'] {
+export function kindFromFile(file: File, forcedKind?: Attachment['kind']): Attachment['kind'] {
+  if (forcedKind) return forcedKind;
   if (file.type.startsWith('image/')) return 'image';
   return 'file';
 }
 
-export async function uploadConversationFile(conversationId: string, sender: Message['sender'], file: File, overrideName?: string) {
+export async function uploadConversationFile(
+  conversationId: string,
+  sender: Message['sender'],
+  file: File,
+  overrideName?: string,
+  options?: { parentAttachmentId?: string | null; kind?: Attachment['kind']; messageBody?: string }
+) {
   await ensureAnonymousUser();
   const db = getFirebaseDb();
   const storage = getFirebaseStorage();
@@ -255,7 +406,7 @@ export async function uploadConversationFile(conversationId: string, sender: Mes
   });
 
   const url = await getDownloadURL(storageRef);
-  const kind = kindFromFile(file);
+  const kind = kindFromFile(file, options?.kind);
   const attachment: Attachment = {
     id: crypto.randomUUID(),
     conversation_id: conversationId,
@@ -266,14 +417,15 @@ export async function uploadConversationFile(conversationId: string, sender: Mes
     size_bytes: file.size,
     kind,
     created_at: nowIso(),
-    signed_url: url
+    signed_url: url,
+    parent_attachment_id: options?.parentAttachmentId || null
   };
 
   await addDoc(collection(db, 'conversations', conversationId, 'messages'), {
     conversation_id: conversationId,
     sender,
     type: 'attachment',
-    body: sender === 'admin' ? 'Kiaro Studio uploaded a file.' : 'Customer uploaded a file.',
+    body: options?.messageBody || (sender === 'admin' ? 'Kiaro Studio uploaded a file.' : 'Customer uploaded a file.'),
     attachment,
     created_at: serverTimestamp()
   });
@@ -322,27 +474,31 @@ export async function markOfferPaid(conversationId: string, offerId: string) {
 
   return new Promise<void>((resolve, reject) => {
     let unsubscribe: Unsubscribe = () => undefined;
-    unsubscribe = onSnapshot(q, async (snapshot) => {
-      unsubscribe();
-      const offerMessage = snapshot.docs[0];
-      if (!offerMessage) {
-        reject(new Error('Offer not found.'));
-        return;
-      }
-      const existing = offerMessage.data().offer || {};
-      await updateDoc(doc(db, 'conversations', conversationId, 'messages', offerMessage.id), {
-        offer: {
-          ...existing,
-          status: 'paid',
-          updated_at: nowIso()
+    unsubscribe = onSnapshot(
+      q,
+      async (snapshot) => {
+        unsubscribe();
+        const offerMessage = snapshot.docs[0];
+        if (!offerMessage) {
+          reject(new Error('Offer not found.'));
+          return;
         }
-      });
-      await updateDoc(doc(db, 'conversations', conversationId), {
-        status: 'paid',
-        updated_at: serverTimestamp()
-      });
-      resolve();
-    }, reject);
+        const existing = offerMessage.data().offer || {};
+        await updateDoc(doc(db, 'conversations', conversationId, 'messages', offerMessage.id), {
+          offer: {
+            ...existing,
+            status: 'paid',
+            updated_at: nowIso()
+          }
+        });
+        await updateDoc(doc(db, 'conversations', conversationId), {
+          status: 'paid',
+          updated_at: serverTimestamp()
+        });
+        resolve();
+      },
+      reject
+    );
   });
 }
 
@@ -360,4 +516,23 @@ export async function saveAnnotationRecord(conversationId: string, input: { sour
 export async function deleteConversation(conversationId: string) {
   const db = getFirebaseDb();
   await deleteDoc(doc(db, 'conversations', conversationId));
+}
+
+export function subscribeToHomeConfig(callback: (config: HomeInterfaceConfig) => void): Unsubscribe {
+  const db = getFirebaseDb();
+  return onSnapshot(doc(db, 'siteConfig', 'home'), (snapshot) => {
+    callback({ ...defaultHomeConfig, ...(snapshot.exists() ? snapshot.data() : {}) } as HomeInterfaceConfig);
+  });
+}
+
+export async function saveHomeConfig(config: HomeInterfaceConfig) {
+  const db = getFirebaseDb();
+  await setDoc(
+    doc(db, 'siteConfig', 'home'),
+    {
+      ...config,
+      updated_at: serverTimestamp()
+    },
+    { merge: true }
+  );
 }

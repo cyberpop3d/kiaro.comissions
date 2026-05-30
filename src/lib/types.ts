@@ -16,6 +16,7 @@ export type Conversation = {
   status: ConversationStatus;
   created_at: string;
   updated_at: string;
+  owner_uid?: string | null;
   guest_sessions?: {
     name: string | null;
     email: string | null;
@@ -34,6 +35,7 @@ export type Attachment = {
   kind: 'image' | 'file' | 'annotation';
   created_at: string;
   signed_url?: string | null;
+  parent_attachment_id?: string | null;
 };
 
 export type Offer = {
@@ -60,4 +62,15 @@ export type Message = {
   created_at: string;
   attachments?: Attachment | null;
   offers?: Offer | null;
+};
+
+export type HomeInterfaceConfig = {
+  eyebrow: string;
+  title: string;
+  subtitle: string;
+  googleButton: string;
+  guestButton: string;
+  guestTitle: string;
+  guestHelper: string;
+  accessHelper: string;
 };

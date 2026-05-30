@@ -4,8 +4,8 @@ import { AnnotationModal } from '@/components/AnnotationModal';
 import { OfferCard } from '@/components/OfferCard';
 import { markOfferPaid, saveAnnotationRecord, sendOfferMessage, sendTextMessage, subscribeToMessages, uploadConversationFile, verifyAccess } from '@/lib/firebase/data';
 import type { Attachment, Message } from '@/lib/types';
-import { Image as ImageIcon, Paperclip, Send, UploadCloud } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { FileArchive, Image as ImageIcon, Images, Paperclip, Plus, Send, UploadCloud, Wand2, type LucideIcon } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(' ');
@@ -18,7 +18,7 @@ function AttachmentPreview({
   attachment: Attachment;
   onAnnotate: (attachment: Attachment) => void;
 }) {
-  const isImage = attachment.kind === 'image' && attachment.signed_url;
+  const isImage = (attachment.kind === 'image' || attachment.kind === 'annotation') && attachment.signed_url;
 
   return (
     <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-3">
@@ -28,7 +28,7 @@ function AttachmentPreview({
           <img src={attachment.signed_url || ''} alt={attachment.file_name} className="max-h-80 w-full rounded-xl object-contain" />
           <div className="mt-3 flex items-center justify-between gap-3 text-xs text-kiaro-muted">
             <span className="flex items-center gap-2"><ImageIcon size={14} /> {attachment.file_name}</span>
-            <span>Edit / mark up</span>
+            <span>Edit</span>
           </div>
         </button>
       ) : (
@@ -37,6 +37,57 @@ function AttachmentPreview({
           <span className="text-xs text-kiaro-muted">Download</span>
         </a>
       )}
+    </div>
+  );
+}
+
+function EmptyLibraryCard({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
+  return (
+    <div className="grid min-h-36 place-items-center rounded-3xl border border-dashed border-white/10 bg-white/[0.025] p-6 text-center text-kiaro-muted">
+      <div>
+        <Icon className="mx-auto opacity-40" size={42} />
+        <div className="mt-3 text-xs font-bold uppercase tracking-[0.22em] opacity-70">{label}</div>
+      </div>
+    </div>
+  );
+}
+
+function ImageLibraryCard({
+  attachment,
+  variants,
+  onAnnotate,
+  onAddVariation
+}: {
+  attachment: Attachment;
+  variants: Attachment[];
+  onAnnotate: (attachment: Attachment) => void;
+  onAddVariation: (attachment: Attachment) => void;
+}) {
+  return (
+    <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-3">
+      <button type="button" onClick={() => onAnnotate(attachment)} className="block w-full overflow-hidden rounded-2xl bg-black/25">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={attachment.signed_url || ''} alt={attachment.file_name} className="h-36 w-full object-cover" />
+      </button>
+      <div className="mt-3 min-w-0 text-sm font-bold text-kiaro-text/90">{attachment.file_name}</div>
+      <div className="mt-3 flex gap-2">
+        <button type="button" onClick={() => onAnnotate(attachment)} className="btn-ghost flex flex-1 items-center justify-center gap-2 px-3 py-2 text-xs font-bold">
+          <Wand2 size={14} /> Edit
+        </button>
+        <button type="button" onClick={() => onAddVariation(attachment)} className="btn-ghost grid h-9 w-10 place-items-center">
+          <Plus size={16} />
+        </button>
+      </div>
+      {variants.length ? (
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          {variants.map((variant) => (
+            <button key={variant.id} type="button" onClick={() => onAnnotate(variant)} className="overflow-hidden rounded-xl border border-white/10 bg-black/25">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={variant.signed_url || ''} alt={variant.file_name} className="h-16 w-full object-cover opacity-85" />
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -62,20 +113,18 @@ export function ConversationView({
   const [error, setError] = useState('');
   const [accessOk, setAccessOk] = useState(role === 'admin');
   const [annotating, setAnnotating] = useState<Attachment | null>(null);
+  const [variationParent, setVariationParent] = useState<Attachment | null>(null);
   const [offerAmount, setOfferAmount] = useState('35');
   const [offerScope, setOfferScope] = useState('Custom design/support work agreed in Kiaro Studio chat.');
   const [offerUrl, setOfferUrl] = useState('');
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const variationInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     async function checkAccess() {
       if (role === 'admin') {
         setAccessOk(Boolean(adminSecret));
-        return;
-      }
-      if (!accessKey) {
-        setAccessOk(false);
         return;
       }
       try {
@@ -110,6 +159,21 @@ export function ConversationView({
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length]);
 
+  const attachments = useMemo(() => messages.map((message) => message.attachments).filter(Boolean) as Attachment[], [messages]);
+  const imageAttachments = useMemo(() => attachments.filter((attachment) => attachment.kind === 'image' || attachment.kind === 'annotation'), [attachments]);
+  const mainImages = useMemo(() => imageAttachments.filter((attachment) => !attachment.parent_attachment_id && attachment.kind === 'image'), [imageAttachments]);
+  const imageVariantsByParent = useMemo(() => {
+    const grouped: Record<string, Attachment[]> = {};
+    imageAttachments.forEach((attachment) => {
+      const parentId = attachment.parent_attachment_id;
+      if (!parentId) return;
+      grouped[parentId] = grouped[parentId] || [];
+      grouped[parentId].push(attachment);
+    });
+    return grouped;
+  }, [imageAttachments]);
+  const fileAttachments = useMemo(() => attachments.filter((attachment) => attachment.kind === 'file'), [attachments]);
+
   async function sendMessage() {
     if (!body.trim()) return;
     setSending(true);
@@ -124,11 +188,11 @@ export function ConversationView({
     }
   }
 
-  async function uploadFile(file: File, overrideName?: string) {
+  async function uploadFile(file: File, overrideName?: string, options?: { parentAttachmentId?: string | null; kind?: Attachment['kind']; messageBody?: string }) {
     setUploading(true);
     setError('');
     try {
-      await uploadConversationFile(conversationId, role, file, overrideName);
+      await uploadConversationFile(conversationId, role, file, overrideName, options);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Upload failed.';
       setError(`${message} If this mentions billing or Storage access, Firebase Storage may require Blaze billing; use Cloudflare R2/UploadThing for the storage layer instead.`);
@@ -160,25 +224,35 @@ export function ConversationView({
   }
 
   async function saveAnnotation(dataUrl: string, strokes: unknown[]) {
+    const source = annotating;
     const blob = await (await fetch(dataUrl)).blob();
-    const baseName = annotating?.file_name?.replace(/\.[^.]+$/, '') || 'annotation';
+    const baseName = source?.file_name?.replace(/\.[^.]+$/, '') || 'annotation';
     const file = new File([blob], `${baseName}-marked-up.png`, { type: 'image/png' });
-    await uploadFile(file, file.name);
+    await uploadFile(file, file.name, {
+      parentAttachmentId: source?.id || null,
+      kind: 'annotation',
+      messageBody: role === 'admin' ? 'Kiaro Studio added a marked-up image.' : 'Customer added a marked-up image.'
+    });
 
-    if (annotating) {
+    if (source) {
       await saveAnnotationRecord(conversationId, {
-        sourceAttachmentId: annotating.id,
+        sourceAttachmentId: source.id,
         strokes,
         createdBy: role
       });
     }
   }
 
+  function addVariation(parent: Attachment) {
+    setVariationParent(parent);
+    variationInputRef.current?.click();
+  }
+
   if (!accessOk) {
     return (
       <div className="kiaro-card p-8">
         <h1 className="font-display text-3xl font-black">Access needed</h1>
-        <p className="mt-3 text-sm leading-6 text-kiaro-muted">This conversation requires a valid access key or admin secret.</p>
+        <p className="mt-3 text-sm leading-6 text-kiaro-muted">This conversation requires a valid access key or admin access.</p>
       </div>
     );
   }
@@ -190,11 +264,11 @@ export function ConversationView({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h1 className="font-display text-2xl font-black">Conversation</h1>
-              <p className="mt-1 text-sm text-kiaro-muted">Share concepts, references, print photos, ZIP files, STL files, and markup notes.</p>
+              <p className="mt-1 text-sm text-kiaro-muted">Upload references, project files and visual notes.</p>
             </div>
             {accessKeyBanner && accessKey ? (
               <div className="rounded-2xl border border-kiaro-neon/20 bg-kiaro-neon/5 px-4 py-3 text-right">
-                <div className="text-[10px] uppercase tracking-[0.26em] text-kiaro-muted">Access key</div>
+                <div className="text-[10px] uppercase tracking-[0.26em] text-kiaro-muted">Guest access key</div>
                 <div className="font-display text-lg font-black text-kiaro-neon">{accessKey}</div>
               </div>
             ) : null}
@@ -215,9 +289,9 @@ export function ConversationView({
                     </div>
                     {message.type === 'offer' && message.offers ? (
                       <OfferCard offer={message.offers} admin={role === 'admin'} onPaid={() => markPaid(message.offers!.id)} />
-                    ) : (
+                    ) : message.body ? (
                       <p className="whitespace-pre-wrap text-sm leading-6 text-kiaro-text/90">{message.body}</p>
-                    )}
+                    ) : null}
                     {message.attachments ? <AttachmentPreview attachment={message.attachments} onAnnotate={setAnnotating} /> : null}
                   </div>
                 </div>
@@ -234,6 +308,7 @@ export function ConversationView({
               <input
                 type="file"
                 className="hidden"
+                accept="image/*,.zip,.stl,.3mf,.obj,.fbx,.pdf"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) uploadFile(file);
@@ -257,30 +332,50 @@ export function ConversationView({
               <Send size={18} />
             </button>
           </div>
-          <div className="mt-2 text-xs text-kiaro-muted">{uploading ? 'Uploading file…' : 'Supports images, ZIP, STL, 3MF, PDF and common reference files.'}</div>
+          <div className="mt-2 text-xs text-kiaro-muted">{uploading ? 'Uploading file…' : 'Supports images, ZIP, STL, 3MF and PDF files.'}</div>
         </div>
       </section>
 
       <aside className="space-y-5">
         <div className="kiaro-card p-5">
-          <h2 className="font-display text-xl font-black">Libraries</h2>
-          <p className="mt-2 text-sm leading-6 text-kiaro-muted">Uploaded images and files stay attached to this conversation. Image cards can be opened and marked up by both sides.</p>
-          <div className="mt-5 grid gap-3">
-            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-              <div className="text-xs uppercase tracking-[0.22em] text-kiaro-muted">Images</div>
-              <div className="mt-1 text-2xl font-black">{messages.filter((m) => m.attachments?.kind === 'image').length}</div>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-              <div className="text-xs uppercase tracking-[0.22em] text-kiaro-muted">Files</div>
-              <div className="mt-1 text-2xl font-black">{messages.filter((m) => m.attachments?.kind === 'file').length}</div>
-            </div>
+          <h2 className="font-display text-xl font-black">Image library</h2>
+          <div className="mt-4 grid gap-3">
+            {mainImages.length ? (
+              mainImages.map((attachment) => (
+                <ImageLibraryCard
+                  key={attachment.id}
+                  attachment={attachment}
+                  variants={imageVariantsByParent[attachment.id] || []}
+                  onAnnotate={setAnnotating}
+                  onAddVariation={addVariation}
+                />
+              ))
+            ) : (
+              <EmptyLibraryCard icon={Images} label="No images yet" />
+            )}
+          </div>
+        </div>
+
+        <div className="kiaro-card p-5">
+          <h2 className="font-display text-xl font-black">File library</h2>
+          <div className="mt-4 grid gap-3">
+            {fileAttachments.length ? (
+              fileAttachments.map((attachment) => (
+                <a key={attachment.id} href={attachment.signed_url || '#'} target="_blank" rel="noreferrer" className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.035] p-4 text-sm kiaro-hover">
+                  <span className="flex min-w-0 items-center gap-3"><FileArchive size={18} className="text-kiaro-neon" /> <span className="truncate">{attachment.file_name}</span></span>
+                  <span className="text-xs text-kiaro-muted">Download</span>
+                </a>
+              ))
+            ) : (
+              <EmptyLibraryCard icon={FileArchive} label="No files yet" />
+            )}
           </div>
         </div>
 
         {role === 'admin' ? (
           <div className="kiaro-card p-5">
             <h2 className="font-display text-xl font-black">Send offer</h2>
-            <p className="mt-2 text-sm leading-6 text-kiaro-muted">Customer sees nothing until you send this card. Paste any payment link: Ko-fi, Cults, Patreon, Shopier, invoice, etc.</p>
+            <p className="mt-2 text-sm leading-6 text-kiaro-muted">Customer sees nothing until you send this card. Paste any payment link.</p>
             <div className="mt-4 space-y-3">
               <input className="glass-input w-full px-4 py-3" value={offerAmount} onChange={(e) => setOfferAmount(e.target.value)} placeholder="Amount" />
               <textarea className="glass-input min-h-24 w-full px-4 py-3" value={offerScope} onChange={(e) => setOfferScope(e.target.value)} placeholder="Scope" />
@@ -288,13 +383,27 @@ export function ConversationView({
               <button className="btn-primary w-full px-5 py-3 text-sm" onClick={sendOffer}>Send custom offer</button>
             </div>
           </div>
-        ) : (
-          <div className="kiaro-card p-5">
-            <h2 className="font-display text-xl font-black">How to continue later</h2>
-            <p className="mt-2 text-sm leading-6 text-kiaro-muted">Your browser remembers this conversation. Save your access key too, so you can resume from another device.</p>
-          </div>
-        )}
+        ) : null}
       </aside>
+
+      <input
+        ref={variationInputRef}
+        type="file"
+        className="hidden"
+        accept="image/*"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file && variationParent) {
+            uploadFile(file, file.name, {
+              parentAttachmentId: variationParent.id,
+              kind: 'image',
+              messageBody: role === 'admin' ? 'Kiaro Studio added an image variation.' : 'Customer added an image variation.'
+            });
+          }
+          setVariationParent(null);
+          event.currentTarget.value = '';
+        }}
+      />
 
       {annotating?.signed_url ? (
         <AnnotationModal
