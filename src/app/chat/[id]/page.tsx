@@ -27,12 +27,17 @@ export default function ChatPage() {
       const user = await waitForAuthUser();
 
       if (cancelled) return;
-      const canUseLocalKey = key && savedId === params.id;
+      const isGoogleUser = Boolean(user && !user.isAnonymous);
+      const canUseLocalKey = !isGoogleUser && key && savedId === params.id;
       const ok = await verifyAccess(params.id, canUseLocalKey ? key : null).catch(() => false);
 
-      if (!ok && (!user || user.isAnonymous)) {
+      if (!ok) {
         router.push('/');
         return;
+      }
+
+      if (isGoogleUser) {
+        localStorage.removeItem('kiaro.accessKey');
       }
 
       setAccessKey(canUseLocalKey ? key : null);
@@ -96,7 +101,7 @@ export default function ChatPage() {
         }
       />
       <div className="mx-auto max-w-7xl px-5">
-        <ConversationView conversationId={params.id} role="customer" accessKey={accessKey} accessKeyBanner={Boolean(accessKey)} />
+        <ConversationView conversationId={params.id} role="customer" accessKey={accessKey} accessKeyBanner={conversation?.auth_mode === 'guest' && Boolean(accessKey)} />
       </div>
 
       {usernameOpen ? (

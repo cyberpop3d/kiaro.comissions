@@ -116,19 +116,25 @@ function safeEmailValue(value?: string | null) {
 
 async function createConversationForUser(user: User, input: { name?: string | null; email?: string | null; googleOwned?: boolean }) {
   const db = getFirebaseDb();
-  let accessKey = generateAccessKey();
-  let keyRef = doc(db, 'guestSessions', accessKey);
+  const isGoogleConversation = Boolean(input.googleOwned);
+  let accessKey: string | null = null;
+  let keyRef: ReturnType<typeof doc> | null = null;
 
-  for (let i = 0; i < 4; i += 1) {
-    const existing = await getDoc(keyRef);
-    if (!existing.exists()) break;
+  if (!isGoogleConversation) {
     accessKey = generateAccessKey();
     keyRef = doc(db, 'guestSessions', accessKey);
+
+    for (let i = 0; i < 4; i += 1) {
+      const existing = await getDoc(keyRef);
+      if (!existing.exists()) break;
+      accessKey = generateAccessKey();
+      keyRef = doc(db, 'guestSessions', accessKey);
+    }
   }
 
   const safeName = safeNameValue(input.name);
   const safeEmail = safeEmailValue(input.email);
-  const title = safeName ? `${safeName} · Custom request` : input.googleOwned ? 'Google customer · Custom request' : 'Guest custom request';
+  const title = safeName ? `${safeName} · Custom request` : isGoogleConversation ? 'Google customer · Custom request' : 'Guest custom request';
 
   const conversationRef = await addDoc(collection(db, 'conversations'), {
     title,
@@ -139,26 +145,28 @@ async function createConversationForUser(user: User, input: { name?: string | nu
       access_key: accessKey
     },
     owner_uid: user.uid,
-    auth_mode: input.googleOwned ? 'google' : 'guest',
+    auth_mode: isGoogleConversation ? 'google' : 'guest',
     created_at: serverTimestamp(),
     updated_at: serverTimestamp()
   });
 
-  await setDoc(keyRef, {
-    access_key: accessKey,
-    conversation_id: conversationRef.id,
-    owner_uid: user.uid,
-    name: safeName,
-    email: safeEmail,
-    created_at: serverTimestamp(),
-    updated_at: serverTimestamp()
-  });
+  if (accessKey && keyRef) {
+    await setDoc(keyRef, {
+      access_key: accessKey,
+      conversation_id: conversationRef.id,
+      owner_uid: user.uid,
+      name: safeName,
+      email: safeEmail,
+      created_at: serverTimestamp(),
+      updated_at: serverTimestamp()
+    });
+  }
 
   await addDoc(collection(db, 'conversations', conversationRef.id, 'messages'), {
     conversation_id: conversationRef.id,
     sender: 'system',
     type: 'system',
-    body: input.googleOwned
+    body: isGoogleConversation
       ? 'Conversation started with Google sign-in.'
       : `Conversation started. Save this access key: ${accessKey}`,
     created_at: serverTimestamp()
@@ -188,18 +196,16 @@ export async function getOrCreateGoogleConversation() {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.docSnap;
 
   if (existing) {
-    const guest = existing.data().guest || {};
-    const key = String(guest.access_key || '');
-    if (key) localStorage.setItem('kiaro.accessKey', key);
     localStorage.setItem('kiaro.conversationId', existing.id);
-    return { conversationId: existing.id, accessKey: key };
+    localStorage.removeItem('kiaro.accessKey');
+    return { conversationId: existing.id, accessKey: null };
   }
 
   const name = user.displayName || '';
   const email = user.email || '';
   const created = await createConversationForUser(user, { name, email, googleOwned: true });
   localStorage.setItem('kiaro.conversationId', created.conversationId);
-  localStorage.setItem('kiaro.accessKey', created.accessKey);
+  localStorage.removeItem('kiaro.accessKey');
   return created;
 }
 
@@ -226,6 +232,7 @@ function mapConversationData(id: string, data: DocumentData): Conversation {
     created_at: timestampToIso(data.created_at),
     updated_at: timestampToIso(data.updated_at),
     owner_uid: data.owner_uid ? String(data.owner_uid) : null,
+    auth_mode: data.auth_mode === 'google' ? 'google' : 'guest',
     guest_sessions: {
       name: guest.name ?? null,
       email: guest.email ?? null,

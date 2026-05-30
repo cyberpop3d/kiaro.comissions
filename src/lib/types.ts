@@ -17,6 +17,7 @@ export type Conversation = {
   created_at: string;
   updated_at: string;
   owner_uid?: string | null;
+  auth_mode?: 'google' | 'guest';
   guest_sessions?: {
     name: string | null;
     email: string | null;
