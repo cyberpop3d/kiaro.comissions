@@ -276,7 +276,8 @@ function mapAttachment(raw: DocumentData | undefined): Attachment | null {
     kind: (raw.kind || 'file') as Attachment['kind'],
     created_at: timestampToIso(raw.created_at),
     signed_url: raw.signed_url ? String(raw.signed_url) : null,
-    parent_attachment_id: raw.parent_attachment_id ? String(raw.parent_attachment_id) : null
+    parent_attachment_id: raw.parent_attachment_id ? String(raw.parent_attachment_id) : null,
+    project_id: raw.project_id ? String(raw.project_id) : null
   };
 }
 
@@ -454,7 +455,7 @@ export async function uploadConversationFile(
   sender: Message['sender'],
   file: File,
   overrideName?: string,
-  options?: { parentAttachmentId?: string | null; kind?: Attachment['kind']; messageBody?: string }
+  options?: { parentAttachmentId?: string | null; kind?: Attachment['kind']; messageBody?: string; projectId?: string | null }
 ) {
   await ensureAnonymousUser();
   const db = getFirebaseDb();
@@ -472,7 +473,8 @@ export async function uploadConversationFile(
     kind,
     created_at: nowIso(),
     signed_url: uploaded.url,
-    parent_attachment_id: options?.parentAttachmentId || null
+    parent_attachment_id: options?.parentAttachmentId || null,
+    project_id: options?.projectId || null
   };
 
   await addDoc(collection(db, 'conversations', conversationId, 'messages'), {

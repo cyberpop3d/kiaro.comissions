@@ -30,6 +30,7 @@ import {
   Lock,
   Paperclip,
   Plus,
+  Radio,
   Send,
   Trash2,
   UploadCloud,
@@ -41,6 +42,37 @@ import { type DragEvent, useEffect, useMemo, useRef, useState } from 'react';
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(' ');
+}
+
+const GENERAL_SCOPE_ID = 'general';
+
+type ProjectContentStats = {
+  images: number;
+  files: number;
+  total: number;
+};
+
+function scopeIdForAttachment(attachment: Attachment) {
+  return attachment.project_id || GENERAL_SCOPE_ID;
+}
+
+function emptyStats(): ProjectContentStats {
+  return { images: 0, files: 0, total: 0 };
+}
+
+function summarizeStats(stats?: ProjectContentStats) {
+  if (!stats || stats.total === 0) return 'No uploads';
+  const parts: string[] = [];
+  if (stats.files) parts.push(`${stats.files} file${stats.files > 1 ? 's' : ''}`);
+  if (stats.images) parts.push(`${stats.images} image${stats.images > 1 ? 's' : ''}`);
+  return parts.join(' · ');
+}
+
+function latestAttachmentDate(attachments: Attachment[]) {
+  return attachments.reduce<string | null>((latest, attachment) => {
+    if (!latest || attachment.created_at > latest) return attachment.created_at;
+    return latest;
+  }, null);
 }
 
 function attachmentDownloadUrl(attachment: { signed_url?: string | null; file_name?: string | null }) {
@@ -244,36 +276,61 @@ function ProjectSwitcher({
   projects,
   currentProject,
   selectedProjectId,
-  setSelectedProjectId,
+  onSelectProject,
   onNewProject,
-  role
+  role,
+  statsByScope,
+  unreadByScope
 }: {
   projects: PaidProject[];
   currentProject?: PaidProject | null;
   selectedProjectId: string | null;
-  setSelectedProjectId: (id: string) => void;
+  onSelectProject: (id: string) => void;
   onNewProject: () => void;
   role: 'customer' | 'admin';
+  statsByScope: Record<string, ProjectContentStats>;
+  unreadByScope: Record<string, number>;
 }) {
   const [open, setOpen] = useState(false);
+  const selectedScopeId = selectedProjectId || GENERAL_SCOPE_ID;
+  const activeStats = statsByScope[selectedScopeId] || emptyStats();
+  const activeTitle = currentProject?.title || 'General uploads';
+  const activeUnread = unreadByScope[selectedScopeId] || 0;
+  const generalStats = statsByScope[GENERAL_SCOPE_ID] || emptyStats();
+  const generalUnread = unreadByScope[GENERAL_SCOPE_ID] || 0;
+
+  function rowClasses(scopeId: string, isPaid?: boolean) {
+    const selected = selectedScopeId === scopeId;
+    const unread = unreadByScope[scopeId] || 0;
+    return cx(
+      'rounded-2xl border p-3 text-left transition hover:border-white/28',
+      selected ? 'border-white/28 bg-white/[0.065]' : 'border-white/10 bg-white/[0.025]',
+      unread > 0 && !selected && 'project-standby-alert',
+      isPaid && 'border-kiaro-lime/25'
+    );
+  }
 
   return (
     <div className="kiaro-card p-5">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-kiaro-muted">Active workspace</div>
-          <h2 className="mt-1 truncate font-display text-2xl font-black">{currentProject?.title || 'No project yet'}</h2>
-          <p className="mt-2 text-xs leading-5 text-kiaro-muted">{statusCopy(currentProject?.status).description}</p>
+          <h2 className="mt-1 truncate font-display text-2xl font-black">{activeTitle}</h2>
+          <p className="mt-2 text-xs leading-5 text-kiaro-muted">{currentProject ? statusCopy(currentProject.status).description : 'References and files uploaded before a project is selected stay here.'}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-[0.14em] text-kiaro-muted">
+            <span>{summarizeStats(activeStats)}</span>
+            {activeUnread ? <span className="rounded-full border border-white/15 px-2 py-1 text-kiaro-text">{activeUnread} new</span> : null}
+          </div>
         </div>
-        <StatusPill status={currentProject?.status} />
+        {currentProject ? <StatusPill status={currentProject.status} /> : <span className="rounded-full border border-white/12 bg-white/[0.035] px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-kiaro-muted">General</span>}
       </div>
 
       <div className="mt-4 flex gap-2">
         <button type="button" onClick={onNewProject} className="btn-primary flex flex-1 items-center justify-center gap-2 px-4 py-3 text-xs font-black">
           <FolderPlus size={15} /> New project
         </button>
-        {projects.length > 1 ? (
-          <button type="button" onClick={() => setOpen(!open)} className="btn-ghost grid h-11 w-11 place-items-center" title="Switch project">
+        {projects.length || generalStats.total ? (
+          <button type="button" onClick={() => setOpen(!open)} className={cx('btn-ghost relative grid h-11 w-11 place-items-center', Object.entries(unreadByScope).some(([key, value]) => key !== selectedScopeId && value > 0) && 'project-standby-dot')} title="Switch project">
             <ChevronDown size={17} className={cx('transition', open && 'rotate-180')} />
           </button>
         ) : null}
@@ -281,20 +338,39 @@ function ProjectSwitcher({
 
       {open ? (
         <div className="mt-3 grid gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              onSelectProject(GENERAL_SCOPE_ID);
+              setOpen(false);
+            }}
+            className={rowClasses(GENERAL_SCOPE_ID)}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className="min-w-0 truncate text-sm font-bold">General uploads</span>
+              {generalUnread && selectedScopeId !== GENERAL_SCOPE_ID ? <span className="inline-flex items-center gap-1 rounded-full border border-white/18 px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em]"><Radio size={11} /> {generalUnread} new</span> : null}
+            </div>
+            <div className="mt-2 text-[11px] font-bold uppercase tracking-[0.14em] text-kiaro-muted">{summarizeStats(generalStats)}</div>
+          </button>
           {projects.map((project) => (
             <button
               type="button"
               key={project.id}
               onClick={() => {
-                setSelectedProjectId(project.id);
+                onSelectProject(project.id);
                 setOpen(false);
               }}
-              className={cx('rounded-2xl border p-3 text-left transition hover:border-white/28', selectedProjectId === project.id ? 'border-white/28 bg-white/[0.065]' : 'border-white/10 bg-white/[0.025]')}
+              className={rowClasses(project.id, project.status === 'active' || project.status === 'closed')}
+              title={project.status === 'offer_sent' ? 'Waiting for payment confirmation' : undefined}
             >
               <div className="flex items-center justify-between gap-3">
                 <span className="min-w-0 truncate text-sm font-bold">{project.title}</span>
-                <StatusPill status={project.status} />
+                <div className="flex shrink-0 items-center gap-2">
+                  {unreadByScope[project.id] && selectedScopeId !== project.id ? <span className="inline-flex items-center gap-1 rounded-full border border-white/18 px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em]"><Radio size={11} /> {unreadByScope[project.id]} new</span> : null}
+                  <StatusPill status={project.status} />
+                </div>
               </div>
+              <div className="mt-2 text-[11px] font-bold uppercase tracking-[0.14em] text-kiaro-muted">{summarizeStats(statsByScope[project.id] || emptyStats())}</div>
             </button>
           ))}
         </div>
@@ -474,6 +550,7 @@ export function ConversationView({
   const [messages, setMessages] = useState<Message[]>([]);
   const [projects, setProjects] = useState<PaidProject[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [readMarks, setReadMarks] = useState<Record<string, string>>({});
   const [panelTab, setPanelTab] = useState<'references' | 'files' | 'delivery' | 'offer'>('references');
   const [body, setBody] = useState('');
   const [loading, setLoading] = useState(true);
@@ -499,6 +576,15 @@ export function ConversationView({
   const variationInputRef = useRef<HTMLInputElement | null>(null);
   const finalFileInputRef = useRef<HTMLInputElement | null>(null);
   const dragDepthRef = useRef(0);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`kiaro.readScopes.${conversationId}`);
+      if (saved) setReadMarks(JSON.parse(saved) as Record<string, string>);
+    } catch {
+      setReadMarks({});
+    }
+  }, [conversationId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -548,19 +634,52 @@ export function ConversationView({
   }, [accessOk, conversationId]);
 
   useEffect(() => {
+    if (selectedProjectId === GENERAL_SCOPE_ID) return;
     if (selectedProjectId && projects.some((project) => project.id === selectedProjectId)) return;
     const sorted = [...projects].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
     const preferred = sorted.find((project) => project.status === 'active') || sorted.find((project) => project.status !== 'closed') || sorted[0];
-    setSelectedProjectId(preferred?.id || null);
+    setSelectedProjectId(preferred?.id || GENERAL_SCOPE_ID);
   }, [projects, selectedProjectId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length]);
 
-  const currentProject = useMemo(() => projects.find((project) => project.id === selectedProjectId) || null, [projects, selectedProjectId]);
+  const currentScopeId = selectedProjectId || GENERAL_SCOPE_ID;
+  const currentProject = useMemo(() => projects.find((project) => project.id === currentScopeId) || null, [projects, currentScopeId]);
   const attachments = useMemo(() => messages.map((message) => message.attachments).filter(Boolean) as Attachment[], [messages]);
-  const imageAttachments = useMemo(() => attachments.filter((attachment) => attachment.kind === 'image' || attachment.kind === 'annotation'), [attachments]);
+  const attachmentsByScope = useMemo(() => {
+    const grouped: Record<string, Attachment[]> = {};
+    attachments.forEach((attachment) => {
+      const key = scopeIdForAttachment(attachment);
+      grouped[key] = grouped[key] || [];
+      grouped[key].push(attachment);
+    });
+    return grouped;
+  }, [attachments]);
+  const statsByScope = useMemo(() => {
+    const next: Record<string, ProjectContentStats> = {};
+    Object.entries(attachmentsByScope).forEach(([scopeId, scopeAttachments]) => {
+      const images = scopeAttachments.filter((attachment) => attachment.kind === 'image' || attachment.kind === 'annotation').length;
+      const files = scopeAttachments.filter((attachment) => attachment.kind === 'file').length;
+      next[scopeId] = { images, files, total: images + files };
+    });
+    return next;
+  }, [attachmentsByScope]);
+  const unreadByScope = useMemo(() => {
+    const next: Record<string, number> = {};
+    Object.entries(attachmentsByScope).forEach(([scopeId, scopeAttachments]) => {
+      if (scopeId === currentScopeId) {
+        next[scopeId] = 0;
+        return;
+      }
+      const lastRead = readMarks[scopeId] || '1970-01-01T00:00:00.000Z';
+      next[scopeId] = scopeAttachments.filter((attachment) => attachment.created_at > lastRead).length;
+    });
+    return next;
+  }, [attachmentsByScope, currentScopeId, readMarks]);
+  const scopedAttachments = useMemo(() => attachments.filter((attachment) => scopeIdForAttachment(attachment) === currentScopeId), [attachments, currentScopeId]);
+  const imageAttachments = useMemo(() => scopedAttachments.filter((attachment) => attachment.kind === 'image' || attachment.kind === 'annotation'), [scopedAttachments]);
   const mainImages = useMemo(() => imageAttachments.filter((attachment) => !attachment.parent_attachment_id && attachment.kind === 'image'), [imageAttachments]);
   const imageVariantsByParent = useMemo(() => {
     const grouped: Record<string, Attachment[]> = {};
@@ -572,8 +691,28 @@ export function ConversationView({
     });
     return grouped;
   }, [imageAttachments]);
-  const fileAttachments = useMemo(() => attachments.filter((attachment) => attachment.kind === 'file'), [attachments]);
-  const workspaceTitle = currentProject?.title || conversation?.title || 'Commission workspace';
+  const fileAttachments = useMemo(() => scopedAttachments.filter((attachment) => attachment.kind === 'file'), [scopedAttachments]);
+  const workspaceTitle = currentProject?.title || 'General uploads';
+
+  function persistReadMarks(next: Record<string, string>) {
+    setReadMarks(next);
+    try {
+      localStorage.setItem(`kiaro.readScopes.${conversationId}`, JSON.stringify(next));
+    } catch {
+      // Ignore localStorage failures.
+    }
+  }
+
+  function markScopeRead(scopeId: string) {
+    const latest = latestAttachmentDate(attachmentsByScope[scopeId] || []);
+    const next = { ...readMarks, [scopeId]: latest || new Date().toISOString() };
+    persistReadMarks(next);
+  }
+
+  function selectProjectScope(scopeId: string) {
+    setSelectedProjectId(scopeId);
+    markScopeRead(scopeId);
+  }
 
   function isSupportedUpload(file: File) {
     const extension = `.${file.name.split('.').pop()?.toLowerCase() || ''}`;
@@ -651,11 +790,15 @@ export function ConversationView({
     }
   }
 
-  async function uploadFile(file: File, overrideName?: string, options?: { parentAttachmentId?: string | null; kind?: Attachment['kind']; messageBody?: string }) {
+  async function uploadFile(file: File, overrideName?: string, options?: { parentAttachmentId?: string | null; kind?: Attachment['kind']; messageBody?: string; projectId?: string | null }) {
     setUploading(true);
     setError('');
     try {
-      await uploadConversationFile(conversationId, role, file, overrideName, options);
+      await uploadConversationFile(conversationId, role, file, overrideName, {
+        ...options,
+        projectId: options?.parentAttachmentId ? options?.projectId ?? null : (currentProject?.id || null)
+      });
+      markScopeRead(currentProject?.id || GENERAL_SCOPE_ID);
       if (file.type.startsWith('image/')) setPanelTab('references');
       else setPanelTab('files');
     } catch (err) {
@@ -802,6 +945,7 @@ export function ConversationView({
     await uploadFile(file, file.name, {
       parentAttachmentId: source?.id || null,
       kind: 'annotation',
+      projectId: source?.project_id || currentProject?.id || null,
       messageBody: role === 'admin' ? 'Marked-up image added by Kiaro Studio.' : 'Marked-up image added.'
     });
     if (source) await saveAnnotationRecord(conversationId, { sourceAttachmentId: source.id, strokes, createdBy: role });
@@ -861,8 +1005,8 @@ export function ConversationView({
               <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-kiaro-muted">Project conversation</div>
               <h1 className="mt-1 truncate font-display text-3xl font-black">{workspaceTitle}</h1>
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <StatusPill status={currentProject?.status} />
-                <span className="text-xs text-kiaro-muted">{statusCopy(currentProject?.status).description}</span>
+                {currentProject ? <StatusPill status={currentProject.status} /> : <span className="rounded-full border border-white/12 bg-white/[0.035] px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-kiaro-muted">General</span>}
+                <span className="text-xs text-kiaro-muted">{currentProject ? statusCopy(currentProject.status).description : 'Uploads made before selecting a project are collected here.'}</span>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -949,9 +1093,11 @@ export function ConversationView({
           projects={projects}
           currentProject={currentProject}
           selectedProjectId={selectedProjectId}
-          setSelectedProjectId={setSelectedProjectId}
+          onSelectProject={selectProjectScope}
           onNewProject={() => setProjectModalOpen(true)}
           role={role}
+          statsByScope={statsByScope}
+          unreadByScope={unreadByScope}
         />
 
         <div className="kiaro-card p-5">
@@ -1015,6 +1161,7 @@ export function ConversationView({
             uploadFile(file, file.name, {
               parentAttachmentId: variationParent.id,
               kind: 'image',
+              projectId: variationParent.project_id || currentProject?.id || null,
               messageBody: role === 'admin' ? 'Image variation added by Kiaro Studio.' : 'Image variation added.'
             });
           }

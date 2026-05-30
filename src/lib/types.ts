@@ -37,6 +37,7 @@ export type Attachment = {
   created_at: string;
   signed_url?: string | null;
   parent_attachment_id?: string | null;
+  project_id?: string | null;
 };
 
 export type Offer = {
