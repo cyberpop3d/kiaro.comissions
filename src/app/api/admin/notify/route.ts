@@ -1,0 +1,72 @@
+import { NextResponse } from 'next/server';
+
+const NOTIFY_TO = 'finnrubber@gmail.com';
+
+function clean(value: unknown, fallback = '') {
+  return typeof value === 'string' ? value.trim().slice(0, 4000) : fallback;
+}
+
+export async function POST(request: Request) {
+  let payload: Record<string, unknown> = {};
+  try {
+    payload = await request.json();
+  } catch {
+    return NextResponse.json({ ok: false, error: 'Invalid JSON.' }, { status: 400 });
+  }
+
+  const kind = clean(payload.kind, 'message');
+  const name = clean(payload.name, 'Unknown visitor');
+  const conversationId = clean(payload.conversationId, 'unknown');
+  const body = clean(payload.body, 'No message body.');
+  const url = clean(payload.url, '');
+
+  const subject = `Kiaro commission ${kind}: ${name}`;
+  const text = [
+    `New Kiaro Studio commission ${kind}.`,
+    '',
+    `Name: ${name}`,
+    `Conversation ID: ${conversationId}`,
+    url ? `Workspace: ${url}` : '',
+    '',
+    'Message:',
+    body
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const resendKey = process.env.RESEND_API_KEY;
+  const from = process.env.COMMISSION_NOTIFY_FROM || 'Kiaro Commissions <onboarding@resend.dev>';
+
+  if (resendKey) {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${resendKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ from, to: [NOTIFY_TO], subject, text })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Email provider failed.');
+      return NextResponse.json({ ok: false, error: errorText }, { status: 502 });
+    }
+
+    return NextResponse.json({ ok: true, provider: 'resend' });
+  }
+
+  const formSubmit = await fetch(`https://formsubmit.co/ajax/${NOTIFY_TO}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json'
+    },
+    body: JSON.stringify({ _subject: subject, name, conversationId, url, message: text })
+  }).catch(() => null);
+
+  if (!formSubmit?.ok) {
+    return NextResponse.json({ ok: false, error: 'Email notification service is not configured.' }, { status: 202 });
+  }
+
+  return NextResponse.json({ ok: true, provider: 'formsubmit' });
+}
