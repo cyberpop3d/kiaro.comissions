@@ -18,6 +18,7 @@ import {
   subscribeToMessages,
   subscribeToPaidProjects,
   updatePaidProjectStatus,
+  updateTextMessage,
   uploadConversationFile,
   uploadPaidProjectFinalFile,
   verifyAccess
@@ -27,6 +28,7 @@ import { normalizePaymentUrl } from '@/utils/links';
 import { applyDesignConfig } from '@/utils/design';
 import {
   CheckCircle2,
+  Check,
   ChevronDown,
   FileArchive,
   FolderPlus,
@@ -34,12 +36,14 @@ import {
   Images,
   Lock,
   Paperclip,
+  Pencil,
   Plus,
   Radio,
   Send,
   Trash2,
   UploadCloud,
   Wand2,
+  X,
   XCircle,
   type LucideIcon
 } from 'lucide-react';
@@ -567,6 +571,9 @@ export function ConversationView({
   const [readMarks, setReadMarks] = useState<Record<string, string>>({});
   const [panelTab, setPanelTab] = useState<'references' | 'files' | 'delivery' | 'offer'>('references');
   const [body, setBody] = useState('');
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingBody, setEditingBody] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -808,12 +815,64 @@ export function ConversationView({
     setSending(true);
     setError('');
     try {
-      await sendTextMessage(conversationId, role, body);
+      const messageBody = body.trim();
+      await sendTextMessage(conversationId, role, messageBody);
       setBody('');
+
+      if (role === 'admin' && conversation?.guest_sessions?.email && adminSecret) {
+        const response = await fetch('/api/admin/notify', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-admin-secret': adminSecret
+          },
+          body: JSON.stringify({
+            kind: 'admin_reply',
+            name: conversation.guest_sessions.name || 'Commission client',
+            recipientEmail: conversation.guest_sessions.email,
+            conversationId,
+            body: messageBody,
+            url: `${window.location.origin}/chat/${conversationId}`
+          })
+        });
+
+        if (!response.ok) {
+          setError('Reply sent, but the email notification could not be delivered.');
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Message failed.');
     } finally {
       setSending(false);
+    }
+  }
+
+  function startEditingMessage(message: Message) {
+    setEditingMessageId(message.id);
+    setEditingBody(message.body || '');
+    setError('');
+  }
+
+  function cancelEditingMessage() {
+    setEditingMessageId(null);
+    setEditingBody('');
+  }
+
+  async function saveEditedMessage(message: Message) {
+    if (!editingBody.trim()) {
+      setError('Message cannot be empty.');
+      return;
+    }
+
+    setSavingEdit(true);
+    setError('');
+    try {
+      await updateTextMessage(conversationId, message.id, role, editingBody);
+      cancelEditingMessage();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Message could not be updated.');
+    } finally {
+      setSavingEdit(false);
     }
   }
 
@@ -1057,15 +1116,55 @@ export function ConversationView({
             {messages.map((message) => {
               const mine = message.sender === role;
               const displayBody = getMessageBody(message, chatConfig);
+              const canEdit = mine && message.type === 'text';
+              const isEditing = editingMessageId === message.id;
               return (
                 <div key={message.id} className={cx('flex', mine ? 'justify-end' : 'justify-start')}>
                   <div className={cx('max-w-[82%] rounded-3xl border p-4', mine ? 'border-white/16 bg-white/[0.075]' : 'border-white/10 bg-white/[0.04]')}>
-                    <div className="mb-2 flex items-center gap-2 text-[11px] font-medium tracking-[0.03em] text-kiaro-muted/85">
-                      <span>{getMessageDisplayName(message.sender, role, conversation?.guest_sessions?.name)}</span>
-                      <span className="h-1 w-1 rounded-full bg-white/25" />
-                      <span>{formatMessageTime(message.created_at)}</span>
+                    <div className="mb-2 flex items-center justify-between gap-3 text-[11px] font-medium tracking-[0.03em] text-kiaro-muted/85">
+                      <div className="flex items-center gap-2">
+                        <span>{getMessageDisplayName(message.sender, role, conversation?.guest_sessions?.name)}</span>
+                        <span className="h-1 w-1 rounded-full bg-white/25" />
+                        <span>{formatMessageTime(message.created_at)}</span>
+                        {message.edited_at ? <span>· Edited</span> : null}
+                      </div>
+                      {canEdit && !isEditing ? (
+                        <button
+                          type="button"
+                          onClick={() => startEditingMessage(message)}
+                          className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-kiaro-muted transition hover:bg-white/[0.06] hover:text-kiaro-text"
+                          aria-label="Edit message"
+                        >
+                          <Pencil size={11} /> Edit
+                        </button>
+                      ) : null}
                     </div>
-                    {message.type === 'offer' && message.offers ? (
+                    {isEditing ? (
+                      <div className="grid gap-2">
+                        <textarea
+                          autoFocus
+                          className="glass-input min-h-24 w-full resize-y px-3 py-2 text-sm"
+                          value={editingBody}
+                          maxLength={8000}
+                          onChange={(event) => setEditingBody(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Escape') cancelEditingMessage();
+                            if (event.key === 'Enter' && !event.shiftKey) {
+                              event.preventDefault();
+                              saveEditedMessage(message);
+                            }
+                          }}
+                        />
+                        <div className="flex justify-end gap-2">
+                          <button type="button" disabled={savingEdit} onClick={cancelEditingMessage} className="btn-ghost inline-flex items-center gap-1 px-3 py-2 text-xs font-bold">
+                            <X size={13} /> Cancel
+                          </button>
+                          <button type="button" disabled={savingEdit || !editingBody.trim()} onClick={() => saveEditedMessage(message)} className="btn-primary inline-flex items-center gap-1 px-3 py-2 text-xs font-bold">
+                            <Check size={13} /> {savingEdit ? 'Saving…' : 'Save'}
+                          </button>
+                        </div>
+                      </div>
+                    ) : message.type === 'offer' && message.offers ? (
                       <OfferCard offer={message.offers} admin={role === 'admin'} onPaid={() => markPaid(message.offers!.id)} />
                     ) : displayBody ? (
                       <p className="whitespace-pre-wrap text-sm leading-6 text-kiaro-text/90">{displayBody}</p>
