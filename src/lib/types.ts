@@ -88,6 +88,7 @@ export type Message = {
   attachment_id: string | null;
   offer_id: string | null;
   created_at: string;
+  edited_at?: string | null;
   attachments?: Attachment | null;
   offers?: Offer | null;
 };

@@ -359,6 +359,7 @@ function mapMessage(snap: QueryDocumentSnapshot<DocumentData>): Message {
     attachment_id: data.attachment?.id ? String(data.attachment.id) : null,
     offer_id: data.offer?.id ? String(data.offer.id) : null,
     created_at: timestampToIso(data.created_at),
+    edited_at: data.edited_at ? timestampToIso(data.edited_at) : null,
     attachments: mapAttachment(data.attachment),
     offers: mapOffer(data.offer)
   };
@@ -505,6 +506,27 @@ export async function sendTextMessage(conversationId: string, sender: Message['s
   await updateDoc(doc(db, 'conversations', conversationId), {
     status: sender === 'admin' ? 'waiting_customer' : 'waiting_admin',
     updated_at: serverTimestamp()
+  });
+}
+
+export async function updateTextMessage(conversationId: string, messageId: string, sender: Message['sender'], body: string) {
+  await ensureAnonymousUser();
+  const db = getFirebaseDb();
+  const text = body.trim().slice(0, 8000);
+  if (!text) throw new Error('Message cannot be empty.');
+
+  const messageRef = doc(db, 'conversations', conversationId, 'messages', messageId);
+  const snapshot = await getDoc(messageRef);
+  if (!snapshot.exists()) throw new Error('Message not found.');
+
+  const current = snapshot.data();
+  if (current.type !== 'text' || current.sender !== sender) {
+    throw new Error('You can only edit your own text messages.');
+  }
+
+  await updateDoc(messageRef, {
+    body: text,
+    edited_at: serverTimestamp()
   });
 }
 
