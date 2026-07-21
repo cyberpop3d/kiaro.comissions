@@ -44,3 +44,5 @@ The admin link is not shown on the customer landing page.
 - Payment confirmation is manual. Paste a Ko-fi/custom payment link, send the offer, then mark the project paid when you verify payment.
 - Customer and admin text messages can be edited in place; edits overwrite the current message and do not send a new email notification.
 - Admin text replies send an email notification from `cyberpop3d@gmail.com` when the conversation has a saved email address. Gmail requires 2-Step Verification and a 16-character Google App Password stored as `GMAIL_APP_PASSWORD`.
+- Admins can permanently delete text messages from either side of a conversation. File deletion remains in the file controls so the stored upload is removed too.
+- Customer reply emails use a compact transactional template without tracking or user-supplied message content to reduce spam-filter triggers.
