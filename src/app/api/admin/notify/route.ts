@@ -7,6 +7,16 @@ function clean(value: unknown, fallback = '') {
   return typeof value === 'string' ? value.trim().slice(0, 4000) : fallback;
 }
 
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;'
+  })[character] || character);
+}
+
 export async function POST(request: Request) {
   let payload: Record<string, unknown> = {};
   try {
@@ -34,20 +44,44 @@ export async function POST(request: Request) {
     }
   }
 
-  const subject = isAdminReply ? 'Kiaro Studio replied to your commission' : `Kiaro commission ${kind}: ${name}`;
+  const subject = isAdminReply ? 'New message in your Kiaro Studio workspace' : `Kiaro commission ${kind}: ${name}`;
   const text = [
     isAdminReply ? `Hi ${name},` : `New Kiaro Studio commission ${kind}.`,
-    isAdminReply ? 'Kiaro Studio sent a new reply in your commission workspace.' : '',
+    isAdminReply ? 'You have a new message in your Kiaro Studio commission workspace.' : '',
     '',
     isAdminReply ? '' : `Name: ${name}`,
     isAdminReply ? '' : `Conversation ID: ${conversationId}`,
-    url ? `${isAdminReply ? 'Open your workspace' : 'Workspace'}: ${url}` : '',
+    url ? `${isAdminReply ? 'View the message' : 'Workspace'}: ${url}` : '',
     '',
-    isAdminReply ? 'Reply:' : 'Message:',
-    body
+    isAdminReply ? 'This transactional notification was sent because you have an active commission conversation with Kiaro Studio.' : 'Message:',
+    isAdminReply ? '' : body
   ]
     .filter(Boolean)
     .join('\n');
+
+  const safeName = escapeHtml(name);
+  const safeUrl = escapeHtml(url);
+  const html = isAdminReply
+    ? `<!doctype html>
+<html lang="en">
+  <body style="margin:0;background:#f4f4f2;color:#171717;font-family:Arial,Helvetica,sans-serif;">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;">A new message is waiting in your Kiaro Studio workspace.</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f2;padding:32px 16px;">
+      <tr><td align="center">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #ddddda;border-radius:16px;">
+          <tr><td style="padding:32px;">
+            <p style="margin:0 0 24px;font-size:12px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#666666;">Kiaro Studio Commissions</p>
+            <h1 style="margin:0 0 16px;font-size:26px;line-height:1.2;color:#171717;">You have a new message</h1>
+            <p style="margin:0 0 24px;font-size:16px;line-height:1.6;color:#444444;">Hi ${safeName}, Kiaro Studio replied in your private commission workspace.</p>
+            ${safeUrl ? `<p style="margin:0 0 28px;"><a href="${safeUrl}" style="display:inline-block;background:#171717;color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:13px 20px;border-radius:999px;">View message</a></p>` : ''}
+            <p style="margin:0;font-size:12px;line-height:1.6;color:#777777;">This is a transactional notification for your active Kiaro Studio commission conversation. No marketing or tracking is included.</p>
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>`
+    : undefined;
 
   const resendKey = process.env.RESEND_API_KEY;
   const from = process.env.COMMISSION_NOTIFY_FROM || 'Kiaro Commissions <onboarding@resend.dev>';
@@ -69,7 +103,16 @@ export async function POST(request: Request) {
         to: isAdminReply ? recipientEmail : NOTIFY_TO,
         replyTo: gmailUser,
         subject,
-        text
+        text,
+        html,
+        envelope: { from: gmailUser, to: isAdminReply ? recipientEmail : NOTIFY_TO },
+        headers: isAdminReply
+          ? {
+              'Auto-Submitted': 'auto-generated',
+              'X-Auto-Response-Suppress': 'All',
+              Importance: 'normal'
+            }
+          : undefined
       });
 
       return NextResponse.json({ ok: true, provider: 'gmail' });
@@ -86,7 +129,7 @@ export async function POST(request: Request) {
         Authorization: `Bearer ${resendKey}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ from, to: [isAdminReply ? recipientEmail : NOTIFY_TO], subject, text })
+      body: JSON.stringify({ from, to: [isAdminReply ? recipientEmail : NOTIFY_TO], subject, text, html })
     });
 
     if (!response.ok) {
