@@ -23,6 +23,8 @@ NEXT_PUBLIC_FIREBASE_APP_ID=
 NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=
 UPLOADTHING_TOKEN=
 ADMIN_SECRET=
+RESEND_API_KEY=
+COMMISSION_NOTIFY_FROM="Kiaro Commissions <notifications@your-verified-domain.com>"
 ```
 
 ## Admin URL
@@ -37,3 +39,5 @@ The admin link is not shown on the customer landing page.
 - UploadThing stores uploaded images and files.
 - Firebase Storage is not used.
 - Payment confirmation is manual. Paste a Ko-fi/custom payment link, send the offer, then mark the project paid when you verify payment.
+- Customer and admin text messages can be edited in place; edits overwrite the current message and do not send a new email notification.
+- Admin text replies send an email notification when the conversation has a saved email address. This requires Resend and a verified sender domain.
