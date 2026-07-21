@@ -6,6 +6,7 @@ import {
   createPaidProjectRequest,
   deleteAttachmentPermanently,
   deletePaidProjectFinalFile,
+  deleteTextMessage,
   defaultChatConfig,
   defaultDesignConfig,
   markOfferPaid,
@@ -574,6 +575,7 @@ export function ConversationView({
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingBody, setEditingBody] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
+  const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -876,6 +878,23 @@ export function ConversationView({
     }
   }
 
+  async function deleteMessage(message: Message) {
+    if (role !== 'admin' || message.type !== 'text') return;
+    const confirmed = window.confirm('Permanently delete this message? This cannot be undone.');
+    if (!confirmed) return;
+
+    setDeletingMessageId(message.id);
+    setError('');
+    try {
+      await deleteTextMessage(conversationId, message.id, adminSecret || '');
+      if (editingMessageId === message.id) cancelEditingMessage();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Message could not be deleted.');
+    } finally {
+      setDeletingMessageId(null);
+    }
+  }
+
   async function uploadFile(file: File, overrideName?: string, options?: { parentAttachmentId?: string | null; kind?: Attachment['kind']; messageBody?: string; projectId?: string | null }) {
     setUploading(true);
     setError('');
@@ -1117,6 +1136,7 @@ export function ConversationView({
               const mine = message.sender === role;
               const displayBody = getMessageBody(message, chatConfig);
               const canEdit = mine && message.type === 'text';
+              const canDelete = role === 'admin' && message.type === 'text';
               const isEditing = editingMessageId === message.id;
               return (
                 <div key={message.id} className={cx('flex', mine ? 'justify-end' : 'justify-start')}>
@@ -1128,15 +1148,30 @@ export function ConversationView({
                         <span>{formatMessageTime(message.created_at)}</span>
                         {message.edited_at ? <span>· Edited</span> : null}
                       </div>
-                      {canEdit && !isEditing ? (
-                        <button
-                          type="button"
-                          onClick={() => startEditingMessage(message)}
-                          className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-kiaro-muted transition hover:bg-white/[0.06] hover:text-kiaro-text"
-                          aria-label="Edit message"
-                        >
-                          <Pencil size={11} /> Edit
-                        </button>
+                      {!isEditing && (canEdit || canDelete) ? (
+                        <div className="flex items-center gap-1">
+                          {canEdit ? (
+                            <button
+                              type="button"
+                              onClick={() => startEditingMessage(message)}
+                              className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-kiaro-muted transition hover:bg-white/[0.06] hover:text-kiaro-text"
+                              aria-label="Edit message"
+                            >
+                              <Pencil size={11} /> Edit
+                            </button>
+                          ) : null}
+                          {canDelete ? (
+                            <button
+                              type="button"
+                              disabled={deletingMessageId === message.id}
+                              onClick={() => deleteMessage(message)}
+                              className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-red-200/75 transition hover:bg-red-500/10 hover:text-red-100 disabled:opacity-40"
+                              aria-label="Delete message"
+                            >
+                              <Trash2 size={11} /> {deletingMessageId === message.id ? 'Deleting…' : 'Delete'}
+                            </button>
+                          ) : null}
+                        </div>
                       ) : null}
                     </div>
                     {isEditing ? (
