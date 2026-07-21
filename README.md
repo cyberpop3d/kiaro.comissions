@@ -46,3 +46,4 @@ The admin link is not shown on the customer landing page.
 - Admin text replies send an email notification from `cyberpop3d@gmail.com` when the conversation has a saved email address. Gmail requires 2-Step Verification and a 16-character Google App Password stored as `GMAIL_APP_PASSWORD`.
 - Admins can permanently delete text messages from either side of a conversation. File deletion remains in the file controls so the stored upload is removed too.
 - Customer reply emails use a compact transactional template without tracking or user-supplied message content to reduce spam-filter triggers.
+- Customer presence is refreshed while the chat tab is visible and focused. Admins see an online/offline indicator, and new admin text replies skip email while the customer is actively viewing the conversation.
