@@ -19,6 +19,10 @@ export type Conversation = {
   updated_at: string;
   owner_uid?: string | null;
   auth_mode?: 'google' | 'guest';
+  customer_presence?: {
+    active: boolean;
+    last_seen_at: string | null;
+  } | null;
   guest_sessions?: {
     name: string | null;
     email: string | null;
