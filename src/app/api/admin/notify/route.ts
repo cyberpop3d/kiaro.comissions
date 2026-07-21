@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import nodemailer from 'nodemailer';
 
 const NOTIFY_TO = 'finnrubber@gmail.com';
 
@@ -50,6 +51,33 @@ export async function POST(request: Request) {
 
   const resendKey = process.env.RESEND_API_KEY;
   const from = process.env.COMMISSION_NOTIFY_FROM || 'Kiaro Commissions <onboarding@resend.dev>';
+  const gmailUser = process.env.GMAIL_USER || 'cyberpop3d@gmail.com';
+  const gmailAppPassword = process.env.GMAIL_APP_PASSWORD || '';
+
+  if (gmailAppPassword) {
+    try {
+      const transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+          user: gmailUser,
+          pass: gmailAppPassword
+        }
+      });
+
+      await transporter.sendMail({
+        from: `Kiaro Studio <${gmailUser}>`,
+        to: isAdminReply ? recipientEmail : NOTIFY_TO,
+        replyTo: gmailUser,
+        subject,
+        text
+      });
+
+      return NextResponse.json({ ok: true, provider: 'gmail' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Gmail delivery failed.';
+      return NextResponse.json({ ok: false, error: message }, { status: 502 });
+    }
+  }
 
   if (resendKey) {
     const response = await fetch('https://api.resend.com/emails', {
@@ -70,7 +98,7 @@ export async function POST(request: Request) {
   }
 
   if (isAdminReply) {
-    return NextResponse.json({ ok: false, error: 'Email notification service is not configured.' }, { status: 503 });
+    return NextResponse.json({ ok: false, error: 'GMAIL_APP_PASSWORD is not configured.' }, { status: 503 });
   }
 
   const formSubmit = await fetch(`https://formsubmit.co/ajax/${NOTIFY_TO}`, {
