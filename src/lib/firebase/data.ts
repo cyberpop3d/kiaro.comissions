@@ -530,6 +530,29 @@ export async function updateTextMessage(conversationId: string, messageId: strin
   });
 }
 
+export async function deleteTextMessage(conversationId: string, messageId: string, adminSecret: string) {
+  await ensureAnonymousUser();
+  if (!adminSecret) throw new Error('Admin secret is required.');
+
+  const verification = await fetch('/api/admin/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ secret: adminSecret })
+  });
+  if (!verification.ok) throw new Error('Admin verification failed.');
+
+  const db = getFirebaseDb();
+  const messageRef = doc(db, 'conversations', conversationId, 'messages', messageId);
+  const snapshot = await getDoc(messageRef);
+  if (!snapshot.exists()) throw new Error('Message not found.');
+  if (snapshot.data().type !== 'text') throw new Error('Only text messages can be deleted here.');
+
+  await deleteDoc(messageRef);
+  await updateDoc(doc(db, 'conversations', conversationId), {
+    updated_at: serverTimestamp()
+  });
+}
+
 export function kindFromFile(file: File, forcedKind?: Attachment['kind']): Attachment['kind'] {
   if (forcedKind) return forcedKind;
   if (file.type.startsWith('image/')) return 'image';
