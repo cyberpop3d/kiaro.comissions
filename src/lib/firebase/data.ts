@@ -294,6 +294,7 @@ export async function resumeConversation(accessKey: string) {
 
 function mapConversationData(id: string, data: DocumentData): Conversation {
   const guest = data.guest || {};
+  const customerPresence = data.customer_presence || null;
   return {
     id,
     title: String(data.title || 'Conversation'),
@@ -302,6 +303,12 @@ function mapConversationData(id: string, data: DocumentData): Conversation {
     updated_at: timestampToIso(data.updated_at),
     owner_uid: data.owner_uid ? String(data.owner_uid) : null,
     auth_mode: data.auth_mode === 'google' ? 'google' : 'guest',
+    customer_presence: customerPresence
+      ? {
+          active: Boolean(customerPresence.active),
+          last_seen_at: customerPresence.last_seen_at ? timestampToIso(customerPresence.last_seen_at) : null
+        }
+      : null,
     guest_sessions: {
       name: guest.name ?? null,
       email: guest.email ?? null,
@@ -528,6 +535,33 @@ export async function updateTextMessage(conversationId: string, messageId: strin
     body: text,
     edited_at: serverTimestamp()
   });
+}
+
+const CUSTOMER_PRESENCE_TIMEOUT_MS = 25000;
+
+export async function setCustomerPresence(conversationId: string, active: boolean) {
+  await ensureAnonymousUser();
+  const db = getFirebaseDb();
+  await updateDoc(doc(db, 'conversations', conversationId), {
+    customer_presence: {
+      active,
+      last_seen_at: serverTimestamp()
+    }
+  });
+}
+
+export function customerPresenceIsFresh(conversation?: Conversation | null, now = Date.now()) {
+  const presence = conversation?.customer_presence;
+  if (!presence?.active || !presence.last_seen_at) return false;
+  const lastSeen = new Date(presence.last_seen_at).getTime();
+  return Number.isFinite(lastSeen) && now - lastSeen <= CUSTOMER_PRESENCE_TIMEOUT_MS;
+}
+
+export async function isCustomerViewingConversation(conversationId: string) {
+  const db = getFirebaseDb();
+  const snapshot = await getDoc(doc(db, 'conversations', conversationId));
+  if (!snapshot.exists()) return false;
+  return customerPresenceIsFresh(mapConversationData(snapshot.id, snapshot.data()));
 }
 
 export async function deleteTextMessage(conversationId: string, messageId: string, adminSecret: string) {

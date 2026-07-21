@@ -4,13 +4,16 @@ import { AnnotationModal } from '@/components/AnnotationModal';
 import { OfferCard } from '@/components/OfferCard';
 import {
   createPaidProjectRequest,
+  customerPresenceIsFresh,
   deleteAttachmentPermanently,
   deletePaidProjectFinalFile,
   deleteTextMessage,
   defaultChatConfig,
   defaultDesignConfig,
+  isCustomerViewingConversation,
   markOfferPaid,
   saveAnnotationRecord,
+  setCustomerPresence,
   sendOfferMessage,
   sendTextMessage,
   subscribeToConversation,
@@ -564,6 +567,7 @@ export function ConversationView({
   accessKeyBanner?: boolean;
 }) {
   const [conversation, setConversation] = useState<Conversation | null>(null);
+  const [presenceClock, setPresenceClock] = useState(() => Date.now());
   const [chatConfig, setChatConfig] = useState<ChatInterfaceConfig>(defaultChatConfig);
   const [designConfig, setDesignConfig] = useState<DesignConfig>(defaultDesignConfig);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -670,6 +674,62 @@ export function ConversationView({
   }, [accessOk, conversationId]);
 
   useEffect(() => {
+    if (!accessOk || role !== 'customer') return undefined;
+    let disposed = false;
+
+    function customerIsActive() {
+      return document.visibilityState === 'visible' && document.hasFocus();
+    }
+
+    function publishPresence(active = customerIsActive()) {
+      if (disposed) return;
+      void setCustomerPresence(conversationId, active).catch(() => undefined);
+    }
+
+    function handleVisibilityChange() {
+      publishPresence(customerIsActive());
+    }
+
+    function handleFocus() {
+      publishPresence(true);
+    }
+
+    function handleBlur() {
+      publishPresence(false);
+    }
+
+    function handlePageHide() {
+      publishPresence(false);
+    }
+
+    publishPresence();
+    const heartbeat = window.setInterval(() => {
+      if (customerIsActive()) publishPresence(true);
+    }, 10000);
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('blur', handleBlur);
+    window.addEventListener('pagehide', handlePageHide);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(heartbeat);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('pagehide', handlePageHide);
+      void setCustomerPresence(conversationId, false).catch(() => undefined);
+    };
+  }, [accessOk, conversationId, role]);
+
+  useEffect(() => {
+    if (role !== 'admin') return undefined;
+    const timer = window.setInterval(() => setPresenceClock(Date.now()), 5000);
+    return () => window.clearInterval(timer);
+  }, [role]);
+
+  useEffect(() => {
     if (selectedProjectId === GENERAL_SCOPE_ID) return;
     if (selectedProjectId && projects.some((project) => project.id === selectedProjectId)) return;
     const sorted = [...projects].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
@@ -729,6 +789,7 @@ export function ConversationView({
   }, [imageAttachments]);
   const fileAttachments = useMemo(() => scopedAttachments.filter((attachment) => attachment.kind === 'file'), [scopedAttachments]);
   const workspaceTitle = currentProject?.title || 'General uploads';
+  const customerOnline = role === 'admin' && customerPresenceIsFresh(conversation, presenceClock);
 
   function persistReadMarks(next: Record<string, string>) {
     setReadMarks(next);
@@ -822,6 +883,9 @@ export function ConversationView({
       setBody('');
 
       if (role === 'admin' && conversation?.guest_sessions?.email && adminSecret) {
+        const customerIsViewing = await isCustomerViewingConversation(conversationId).catch(() => false);
+        if (customerIsViewing) return;
+
         const response = await fetch('/api/admin/notify', {
           method: 'POST',
           headers: {
@@ -1110,6 +1174,19 @@ export function ConversationView({
               <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-kiaro-muted">{chatConfig.projectConversationLabel}</div>
               <h1 className="mt-1 truncate font-display text-3xl font-black">{workspaceTitle}</h1>
               <div className="mt-3 flex flex-wrap items-center gap-2">
+                {role === 'admin' ? (
+                  <span
+                    className={cx(
+                      'inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.14em]',
+                      customerOnline
+                        ? 'border-emerald-300/35 bg-emerald-400/10 text-emerald-200'
+                        : 'border-white/12 bg-white/[0.035] text-kiaro-muted'
+                    )}
+                  >
+                    <span className={cx('h-2 w-2 rounded-full', customerOnline ? 'bg-emerald-300' : 'bg-white/25')} />
+                    {customerOnline ? 'Client online' : 'Client offline'}
+                  </span>
+                ) : null}
                 {currentProject ? <StatusPill status={currentProject.status} /> : <span className="rounded-full border border-white/12 bg-white/[0.035] px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-kiaro-muted">General</span>}
                 <span className="text-xs text-kiaro-muted">{currentProject ? statusCopy(currentProject.status).description : chatConfig.generalUploadsDescription}</span>
               </div>
