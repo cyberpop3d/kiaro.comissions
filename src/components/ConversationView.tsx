@@ -28,6 +28,7 @@ import {
   verifyAccess
 } from '@/lib/firebase/data';
 import type { Attachment, ChatInterfaceConfig, Conversation, DesignConfig, Message, PaidProject, ProjectFinalFile, ProjectStatus } from '@/lib/types';
+import { getServiceTopicLabel } from '@/lib/topics';
 import { normalizePaymentUrl } from '@/utils/links';
 import { applyDesignConfig } from '@/utils/design';
 import {
@@ -1156,6 +1157,9 @@ export function ConversationView({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
+        <div className="border-b border-white/10 bg-white/[0.018] px-5 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-kiaro-muted">
+          Design topic <span className="ml-2 text-kiaro-text">{getServiceTopicLabel(conversation?.topic)}</span>
+        </div>
         {dragActive ? (
           <div className={cx('drag-upload-overlay', dragRejected && 'drag-upload-overlay-rejected')}>
             <div className="drag-upload-panel">
