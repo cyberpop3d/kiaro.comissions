@@ -47,6 +47,7 @@ import {
   Send,
   Trash2,
   UploadCloud,
+  Video,
   Wand2,
   X,
   XCircle,
@@ -62,6 +63,7 @@ const GENERAL_SCOPE_ID = 'general';
 
 type ProjectContentStats = {
   images: number;
+  videos: number;
   files: number;
   total: number;
 };
@@ -71,13 +73,14 @@ function scopeIdForAttachment(attachment: Attachment) {
 }
 
 function emptyStats(): ProjectContentStats {
-  return { images: 0, files: 0, total: 0 };
+  return { images: 0, videos: 0, files: 0, total: 0 };
 }
 
 function summarizeStats(stats?: ProjectContentStats) {
   if (!stats || stats.total === 0) return 'No uploads';
   const parts: string[] = [];
   if (stats.files) parts.push(`${stats.files} file${stats.files > 1 ? 's' : ''}`);
+  if (stats.videos) parts.push(`${stats.videos} video${stats.videos > 1 ? 's' : ''}`);
   if (stats.images) parts.push(`${stats.images} image${stats.images > 1 ? 's' : ''}`);
   return parts.join(' · ');
 }
@@ -142,6 +145,7 @@ function EmptyLibraryCard({ icon: Icon, label }: { icon: LucideIcon; label: stri
 
 function AttachmentPreview({ attachment, onAnnotate }: { attachment: Attachment; onAnnotate: (attachment: Attachment) => void }) {
   const isImage = (attachment.kind === 'image' || attachment.kind === 'annotation') && attachment.signed_url;
+  const isVideo = attachment.kind === 'video' && attachment.signed_url;
 
   return (
     <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-3">
@@ -154,6 +158,22 @@ function AttachmentPreview({ attachment, onAnnotate }: { attachment: Attachment;
             <span>Edit</span>
           </div>
         </button>
+      ) : isVideo ? (
+        <div>
+          <video
+            src={attachment.signed_url || ''}
+            controls
+            playsInline
+            preload="metadata"
+            className="max-h-[28rem] w-full rounded-xl bg-black object-contain"
+          >
+            Your browser does not support embedded video playback.
+          </video>
+          <div className="mt-3 flex items-center justify-between gap-3 text-xs text-kiaro-muted">
+            <span className="flex min-w-0 items-center gap-2"><Video size={14} /> <span className="truncate">{attachment.file_name}</span></span>
+            <a href={attachmentDownloadUrl(attachment)} className="shrink-0 hover:text-kiaro-text">Download</a>
+          </div>
+        </div>
       ) : (
         <a href={attachmentDownloadUrl(attachment)} className="flex items-center justify-between gap-3 text-sm text-kiaro-text">
           <span className="flex min-w-0 items-center gap-2"><Paperclip size={16} /> <span className="truncate">{attachment.file_name}</span></span>
@@ -446,7 +466,7 @@ function FilesPanel({ fileAttachments, onDelete, deletingId, role, config }: { f
         fileAttachments.map((attachment) => (
           <div key={attachment.id} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.035] p-4 text-sm kiaro-hover">
             <a href={attachmentDownloadUrl(attachment)} className="flex min-w-0 flex-1 items-center gap-3">
-              <FileArchive size={18} className="shrink-0 text-kiaro-muted" />
+              {attachment.kind === 'video' ? <Video size={18} className="shrink-0 text-kiaro-muted" /> : <FileArchive size={18} className="shrink-0 text-kiaro-muted" />}
               <span className="truncate">{attachment.file_name}</span>
             </a>
             <div className="flex shrink-0 items-center gap-2">
@@ -758,8 +778,9 @@ export function ConversationView({
     const next: Record<string, ProjectContentStats> = {};
     Object.entries(attachmentsByScope).forEach(([scopeId, scopeAttachments]) => {
       const images = scopeAttachments.filter((attachment) => attachment.kind === 'image' || attachment.kind === 'annotation').length;
+      const videos = scopeAttachments.filter((attachment) => attachment.kind === 'video').length;
       const files = scopeAttachments.filter((attachment) => attachment.kind === 'file').length;
-      next[scopeId] = { images, files, total: images + files };
+      next[scopeId] = { images, videos, files, total: images + videos + files };
     });
     return next;
   }, [attachmentsByScope]);
@@ -788,7 +809,7 @@ export function ConversationView({
     });
     return grouped;
   }, [imageAttachments]);
-  const fileAttachments = useMemo(() => scopedAttachments.filter((attachment) => attachment.kind === 'file'), [scopedAttachments]);
+  const fileAttachments = useMemo(() => scopedAttachments.filter((attachment) => attachment.kind === 'file' || attachment.kind === 'video'), [scopedAttachments]);
   const workspaceTitle = currentProject?.title || 'General uploads';
   const customerOnline = role === 'admin' && customerPresenceIsFresh(conversation, presenceClock);
 
@@ -814,13 +835,18 @@ export function ConversationView({
 
   function isSupportedUpload(file: File) {
     const extension = `.${file.name.split('.').pop()?.toLowerCase() || ''}`;
-    return file.type.startsWith('image/') || ['.zip', '.stl', '.3mf', '.obj', '.fbx', '.pdf'].includes(extension);
+    return file.type.startsWith('image/') || file.type.startsWith('video/') || ['.mp4', '.mov', '.webm', '.m4v', '.zip', '.stl', '.3mf', '.obj', '.fbx', '.pdf'].includes(extension);
   }
 
   async function uploadFiles(files: FileList | File[]) {
     const nextFiles = Array.from(files).filter(isSupportedUpload);
     if (!nextFiles.length) {
-      setError('Unsupported file type. Upload images, ZIP, STL, 3MF, OBJ, FBX or PDF files.');
+      setError('Unsupported file type. Upload MP4, MOV, WebM, M4V, images, ZIP, STL, 3MF, OBJ, FBX or PDF files.');
+      return;
+    }
+    const oversizedVideo = nextFiles.find((file) => (file.type.startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(file.name)) && file.size > 256 * 1024 * 1024);
+    if (oversizedVideo) {
+      setError(`${oversizedVideo.name} is larger than the 256 MB video limit.`);
       return;
     }
     for (const file of nextFiles) await uploadFile(file);
@@ -1302,7 +1328,7 @@ export function ConversationView({
                 type="file"
                 multiple
                 className="hidden"
-                accept="image/*,.zip,.stl,.3mf,.obj,.fbx,.pdf"
+                accept="video/mp4,video/quicktime,video/webm,video/x-m4v,.mp4,.mov,.webm,.m4v,image/*,.zip,.stl,.3mf,.obj,.fbx,.pdf"
                 onChange={(e) => {
                   const files = e.target.files;
                   if (files?.length) uploadFiles(files);
@@ -1419,7 +1445,7 @@ export function ConversationView({
         type="file"
         multiple
         className="hidden"
-        accept=".zip,.stl,.3mf,.obj,.fbx,.pdf"
+        accept="video/mp4,video/quicktime,video/webm,video/x-m4v,.mp4,.mov,.webm,.m4v,.zip,.stl,.3mf,.obj,.fbx,.pdf"
         onChange={(event) => {
           uploadFinalFiles(event.currentTarget.files);
           event.currentTarget.value = '';

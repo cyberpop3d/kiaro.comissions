@@ -46,7 +46,7 @@ export type Attachment = {
   file_name: string;
   mime_type: string | null;
   size_bytes: number | null;
-  kind: 'image' | 'file' | 'annotation';
+  kind: 'image' | 'video' | 'file' | 'annotation';
   created_at: string;
   signed_url?: string | null;
   parent_attachment_id?: string | null;
@@ -119,7 +119,7 @@ export type StorageInventoryItem = {
   size_bytes: number | null;
   storage_path: string;
   signed_url: string | null;
-  kind: 'image' | 'file' | 'annotation';
+  kind: 'image' | 'video' | 'file' | 'annotation';
   uploaded_by: Sender;
   created_at: string;
   attachment?: Attachment | null;

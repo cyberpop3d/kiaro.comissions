@@ -5,6 +5,7 @@ const f = createUploadthing();
 export const ourFileRouter = {
   conversationAttachment: f({
     image: { maxFileSize: '32MB', maxFileCount: 10 },
+    video: { maxFileSize: '256MB', maxFileCount: 5 },
     pdf: { maxFileSize: '64MB', maxFileCount: 10 },
     blob: { maxFileSize: '128MB', maxFileCount: 10 }
   })

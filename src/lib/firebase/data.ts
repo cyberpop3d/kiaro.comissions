@@ -43,9 +43,9 @@ export const defaultChatConfig: ChatInterfaceConfig = {
   deliveryTab: 'Delivery',
   offerTab: 'Offer',
   messagePlaceholder: 'Type your message…',
-  dragHelp: 'Drag images, ZIP, STL, 3MF, OBJ, FBX or PDF files into the conversation.',
+  dragHelp: 'Drag videos, images, ZIP, STL, 3MF, OBJ, FBX or PDF files into the conversation.',
   dropTitle: 'Drop to upload',
-  dropSingleFileText: 'Images, ZIP, STL, 3MF, OBJ, FBX and PDF files are supported.',
+  dropSingleFileText: 'Videos, images, ZIP, STL, 3MF, OBJ, FBX and PDF files are supported.',
   dropMultipleFilesText: 'files will be attached to this workspace.',
   unsupportedFileText: 'This file type is not supported.',
   noReferencesLabel: 'No references yet',
@@ -622,9 +622,14 @@ export async function deleteTextMessage(conversationId: string, messageId: strin
   });
 }
 
+function isVideoFile(file: File) {
+  return file.type.startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(file.name);
+}
+
 export function kindFromFile(file: File, forcedKind?: Attachment['kind']): Attachment['kind'] {
   if (forcedKind) return forcedKind;
   if (file.type.startsWith('image/')) return 'image';
+  if (isVideoFile(file)) return 'video';
   return 'file';
 }
 
@@ -643,10 +648,11 @@ function describeUploadThingError(error: unknown) {
 }
 
 async function uploadFileToUploadThing(file: File) {
+  const timeoutMs = isVideoFile(file) ? 300000 : 45000;
   const timeout = new Promise<never>((_, reject) => {
     window.setTimeout(() => {
       reject(new Error('Upload timed out. Check UploadThing token, Vercel environment variables, or file size/type limits.'));
-    }, 45000);
+    }, timeoutMs);
   });
 
   try {
@@ -1183,7 +1189,7 @@ export async function loadStorageInventory(conversations: Conversation[]): Promi
         size_bytes: file.size_bytes,
         storage_path: file.storage_path,
         signed_url: file.signed_url,
-        kind: file.mime_type?.startsWith('image/') ? 'image' : 'file',
+        kind: file.mime_type?.startsWith('image/') ? 'image' : file.mime_type?.startsWith('video/') ? 'video' : 'file',
         uploaded_by: file.uploaded_by,
         created_at: file.created_at,
         attachment: null,
