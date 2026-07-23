@@ -1,4 +1,5 @@
-import type { Attachment, ChatInterfaceConfig, Conversation, DesignConfig, HomeInterfaceConfig, Message, Offer, PaidProject, ProjectFinalFile, ProjectStatus, Sender, StorageInventoryItem, StorageSettingsConfig } from '@/lib/types';
+import type { Attachment, ChatInterfaceConfig, Conversation, DesignConfig, HomeInterfaceConfig, Message, Offer, PaidProject, ProjectFinalFile, ProjectStatus, Sender, ServiceTopic, StorageInventoryItem, StorageSettingsConfig } from '@/lib/types';
+import { isServiceTopic } from '@/lib/topics';
 import { getFirebaseAuth, getFirebaseDb } from '@/lib/firebase/client';
 import {
   addDoc,
@@ -183,7 +184,16 @@ function safeEmailValue(value?: string | null) {
   return (value || '').trim().slice(0, 160) || null;
 }
 
-async function createConversationForUser(user: User, input: { name?: string | null; email?: string | null; googleOwned?: boolean }) {
+async function createConversationForUser(
+  user: User,
+  input: {
+    name?: string | null;
+    email?: string | null;
+    googleOwned?: boolean;
+    topic: ServiceTopic;
+    termsAcceptedAt: string;
+  }
+) {
   const db = getFirebaseDb();
   const isGoogleConversation = Boolean(input.googleOwned);
   let accessKey: string | null = null;
@@ -215,6 +225,9 @@ async function createConversationForUser(user: User, input: { name?: string | nu
     },
     owner_uid: user.uid,
     auth_mode: isGoogleConversation ? 'google' : 'guest',
+    topic: input.topic,
+    terms_accepted_at: input.termsAcceptedAt,
+    terms_version: '2026-07-23',
     created_at: serverTimestamp(),
     updated_at: serverTimestamp()
   });
@@ -244,12 +257,20 @@ async function createConversationForUser(user: User, input: { name?: string | nu
   return { conversationId: conversationRef.id, accessKey };
 }
 
-export async function startConversation(input: { name?: string; email?: string }) {
+export async function startConversation(input: {
+  name?: string;
+  email?: string;
+  topic: ServiceTopic;
+  termsAcceptedAt: string;
+}) {
   const user = await ensureAnonymousUser();
   return createConversationForUser(user, { ...input, googleOwned: !user.isAnonymous });
 }
 
-export async function getOrCreateGoogleConversation() {
+export async function getOrCreateGoogleConversation(input: {
+  topic: ServiceTopic;
+  termsAcceptedAt: string;
+}) {
   const auth = getFirebaseAuth();
   let user = auth.currentUser;
   if (!user || user.isAnonymous) {
@@ -265,6 +286,12 @@ export async function getOrCreateGoogleConversation() {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.docSnap;
 
   if (existing) {
+    await updateDoc(existing.ref, {
+      topic: input.topic,
+      terms_accepted_at: input.termsAcceptedAt,
+      terms_version: '2026-07-23',
+      updated_at: serverTimestamp()
+    });
     localStorage.setItem('kiaro.conversationId', existing.id);
     localStorage.removeItem('kiaro.accessKey');
     return { conversationId: existing.id, accessKey: null };
@@ -272,7 +299,13 @@ export async function getOrCreateGoogleConversation() {
 
   const name = user.displayName || '';
   const email = user.email || '';
-  const created = await createConversationForUser(user, { name, email, googleOwned: true });
+  const created = await createConversationForUser(user, {
+    name,
+    email,
+    googleOwned: true,
+    topic: input.topic,
+    termsAcceptedAt: input.termsAcceptedAt
+  });
   localStorage.setItem('kiaro.conversationId', created.conversationId);
   localStorage.removeItem('kiaro.accessKey');
   return created;
@@ -303,6 +336,8 @@ function mapConversationData(id: string, data: DocumentData): Conversation {
     updated_at: timestampToIso(data.updated_at),
     owner_uid: data.owner_uid ? String(data.owner_uid) : null,
     auth_mode: data.auth_mode === 'google' ? 'google' : 'guest',
+    topic: isServiceTopic(data.topic) ? data.topic : null,
+    terms_accepted_at: data.terms_accepted_at ? timestampToIso(data.terms_accepted_at) : null,
     customer_presence: customerPresence
       ? {
           active: Boolean(customerPresence.active),
