@@ -1,5 +1,11 @@
 export type Sender = 'customer' | 'admin' | 'system';
 export type MessageType = 'text' | 'attachment' | 'offer' | 'payment_update' | 'system';
+export type ServiceTopic =
+  | '3d-product-development'
+  | 'ui-ux'
+  | 'interior-design'
+  | 'website-interaction'
+  | 'other';
 
 export type ConversationStatus =
   | 'open'
@@ -19,6 +25,8 @@ export type Conversation = {
   updated_at: string;
   owner_uid?: string | null;
   auth_mode?: 'google' | 'guest';
+  topic?: ServiceTopic | null;
+  terms_accepted_at?: string | null;
   customer_presence?: {
     active: boolean;
     last_seen_at: string | null;
