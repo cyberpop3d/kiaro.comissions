@@ -21,7 +21,7 @@ export default function HomePage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [checkingUser, setCheckingUser] = useState(true);
-  const [topic, setTopic] = useState<ServiceTopic | ''>('');
+  const [topic, setTopic] = useState<ServiceTopic>('other');
   const [termsAccepted, setTermsAccepted] = useState(false);
 
   useEffect(() => {
@@ -63,8 +63,8 @@ export default function HomePage() {
   }, []);
 
   async function continueAsGuest() {
-    if (!topic || !termsAccepted) {
-      setError('Please select a service and confirm that you have read the information below.');
+    if (!termsAccepted) {
+      setError('Please confirm that you have read the information below.');
       return;
     }
     const name = guestName.trim();
@@ -144,11 +144,10 @@ export default function HomePage() {
               className="glass-input px-4 py-4 text-sm font-semibold normal-case tracking-normal text-kiaro-text"
               value={topic}
               onChange={(event) => {
-                setTopic(event.target.value as ServiceTopic | '');
+                setTopic(event.target.value as ServiceTopic);
                 setError('');
               }}
             >
-              <option value="" className="bg-black text-white">Select a service</option>
               {serviceTopics.map((item) => (
                 <option key={item.value} value={item.value} className="bg-black text-white">
                   {item.label}
@@ -157,11 +156,9 @@ export default function HomePage() {
             </select>
           </label>
 
-          {topic ? (
-            <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.025] px-4 py-3 text-xs leading-5 text-kiaro-muted">
-              Selected request: <span className="font-bold text-kiaro-text">{getServiceTopicLabel(topic)}</span>
-            </div>
-          ) : null}
+          <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.025] px-4 py-3 text-xs leading-5 text-kiaro-muted">
+            Selected request: <span className="font-bold text-kiaro-text">{getServiceTopicLabel(topic)}</span>
+          </div>
 
           <div className="mt-5 rounded-3xl border border-white/12 bg-white/[0.025] p-5">
             <div className="text-xs font-black uppercase tracking-[0.2em] text-kiaro-muted">Before you begin</div>
@@ -189,11 +186,11 @@ export default function HomePage() {
             <GoogleButton
               label={checkingUser ? 'Checking Google session…' : config.googleButton || 'Sign in with Google'}
               className="w-full"
-              disabled={checkingUser || !topic || !termsAccepted}
-              topic={topic || null}
+              disabled={checkingUser || !termsAccepted}
+              topic={topic}
               termsAcceptedAt={termsAccepted ? new Date().toISOString() : null}
             />
-            <button type="button" disabled={!topic || !termsAccepted} onClick={() => setGuestOpen((value) => !value)} className="btn-ghost flex w-full items-center justify-center gap-2 px-6 py-4 text-sm font-black disabled:cursor-not-allowed disabled:opacity-45">
+            <button type="button" disabled={!termsAccepted} onClick={() => setGuestOpen((value) => !value)} className="btn-ghost flex w-full items-center justify-center gap-2 px-6 py-4 text-sm font-black disabled:cursor-not-allowed disabled:opacity-45">
               {config.guestButton || 'Continue without registration'} <ArrowRight size={16} />
             </button>
           </div>
