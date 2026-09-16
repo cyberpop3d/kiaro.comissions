@@ -25,6 +25,34 @@ import { AlertTriangle, Archive, ArchiveRestore, CheckSquare2, ExternalLink, Gri
 import Link from 'next/link';
 import { type DragEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
 
+const YONTUK_COMMISSIONS_ORIGIN = 'https://commissions.yontuk.com';
+const LEGACY_COMMISSIONS_ORIGIN = 'https://commissions.kiarostudio.com';
+const COOKIE_AUTH_SENTINEL = '__yontuk_cookie_auth__';
+
+function submitLegacySecretMigration(secret: string) {
+  const params = new URLSearchParams(window.location.search);
+  const isAllowedRequest =
+    window.location.origin === LEGACY_COMMISSIONS_ORIGIN &&
+    params.get('migrateTo') === YONTUK_COMMISSIONS_ORIGIN;
+
+  if (!isAllowedRequest || !secret) return false;
+
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = `${YONTUK_COMMISSIONS_ORIGIN}/api/admin/migrate`;
+  form.style.display = 'none';
+
+  const input = document.createElement('input');
+  input.type = 'hidden';
+  input.name = 'secret';
+  input.value = secret;
+  form.appendChild(input);
+
+  document.body.appendChild(form);
+  form.submit();
+  return true;
+}
+
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(' ');
 }
@@ -681,6 +709,7 @@ function AdminPanelSettings() {
 export function AdminInbox() {
   const [secret, setSecret] = useState('');
   const [entered, setEntered] = useState(false);
+  const [checkingAccess, setCheckingAccess] = useState(true);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
@@ -692,11 +721,46 @@ export function AdminInbox() {
   const [archiveNotice, setArchiveNotice] = useState('');
 
   useEffect(() => {
-    const saved = localStorage.getItem('kiaro.adminSecret');
-    if (saved) {
-      setSecret(saved);
-      setEntered(true);
+    async function restoreAccess() {
+      const saved = localStorage.getItem('kiaro.adminSecret');
+      if (saved) {
+        if (submitLegacySecretMigration(saved)) return;
+        setSecret(saved);
+        setEntered(true);
+
+        await fetch('/api/admin/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ secret: saved })
+        }).catch(() => undefined);
+
+        setCheckingAccess(false);
+        return;
+      }
+
+      const verification = await fetch('/api/admin/verify').catch(() => null);
+      if (verification?.ok) {
+        setSecret(COOKIE_AUTH_SENTINEL);
+        setEntered(true);
+        setCheckingAccess(false);
+        return;
+      }
+
+      if (
+        window.location.origin === YONTUK_COMMISSIONS_ORIGIN &&
+        !window.sessionStorage.getItem('yontuk.adminMigrationAttempted')
+      ) {
+        window.sessionStorage.setItem('yontuk.adminMigrationAttempted', '1');
+        window.location.replace(
+          `${LEGACY_COMMISSIONS_ORIGIN}/admin?migrateTo=${encodeURIComponent(YONTUK_COMMISSIONS_ORIGIN)}`
+        );
+        return;
+      }
+
+      setCheckingAccess(false);
     }
+
+    void restoreAccess();
   }, []);
 
   useEffect(() => {
@@ -808,7 +872,19 @@ export function AdminInbox() {
     }
 
     localStorage.setItem('kiaro.adminSecret', secret);
+    if (submitLegacySecretMigration(secret)) return;
     setEntered(true);
+  }
+
+  if (checkingAccess) {
+    return (
+      <div className="mx-auto max-w-xl px-5 py-20">
+        <div className="kiaro-card p-7">
+          <h1 className="font-display text-3xl font-black">Restoring admin access</h1>
+          <p className="mt-3 text-sm leading-6 text-kiaro-muted">Checking the secure Kiaro access bridge…</p>
+        </div>
+      </div>
+    );
   }
 
   if (!entered) {
