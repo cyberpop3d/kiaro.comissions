@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
+import { isAdminRequest } from '@/lib/adminAuth';
 
 const NOTIFY_TO = 'finnrubber@gmail.com';
 
@@ -35,8 +36,7 @@ export async function POST(request: Request) {
 
   if (isAdminReply) {
     const submittedSecret = request.headers.get('x-admin-secret') || '';
-    const expectedSecret = process.env.ADMIN_SECRET || '';
-    if (!expectedSecret || submittedSecret !== expectedSecret) {
+    if (!isAdminRequest(request, submittedSecret)) {
       return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 403 });
     }
     if (!recipientEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail)) {
