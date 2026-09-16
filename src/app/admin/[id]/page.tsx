@@ -11,12 +11,23 @@ export default function AdminConversationPage() {
   const [secret, setSecret] = useState<string | null>(null);
 
   useEffect(() => {
-    const saved = localStorage.getItem('kiaro.adminSecret');
-    if (!saved) {
+    async function restoreAccess() {
+      const saved = localStorage.getItem('kiaro.adminSecret');
+      if (saved) {
+        setSecret(saved);
+        return;
+      }
+
+      const verification = await fetch('/api/admin/verify').catch(() => null);
+      if (verification?.ok) {
+        setSecret('__yontuk_cookie_auth__');
+        return;
+      }
+
       router.push('/admin');
-      return;
     }
-    setSecret(saved);
+
+    void restoreAccess();
   }, [router]);
 
   if (!secret) return null;
