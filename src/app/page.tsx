@@ -115,7 +115,7 @@ export default function HomePage() {
       <section className="mx-auto grid max-w-6xl gap-8 px-5 pt-10 lg:grid-cols-[1.05fr_.95fr] lg:pt-20">
         <div className="flex min-h-[56vh] flex-col justify-center space-y-7">
           <div className="inline-flex w-fit rounded-full border border-white/14 bg-white/[0.035] px-4 py-2 text-xs font-bold uppercase tracking-[0.22em] text-kiaro-muted">
-            {config.eyebrow || 'Kiaro Studio Commissions'}
+            {config.eyebrow || 'Yontuk Commissions'}
           </div>
           <h1 className="max-w-4xl font-display text-5xl font-black leading-[0.95] tracking-tight md:text-7xl">
             {config.title || 'Start a private commission workspace.'}
@@ -199,7 +199,7 @@ export default function HomePage() {
             <div className="mt-5 rounded-3xl border border-white/10 bg-white/[0.035] p-5">
               <h3 className="font-display text-xl font-black">{config.guestTitle || 'Choose a display name'}</h3>
               <p className="mt-2 text-sm leading-6 text-kiaro-muted">
-                {config.guestHelper || 'This name helps Kiaro Studio identify your request inside the workspace.'}
+                {config.guestHelper || 'This name helps Yontuk identify your request inside the workspace.'}
               </p>
               <input
                 className="glass-input mt-4 w-full px-4 py-4"
