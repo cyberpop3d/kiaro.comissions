@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { UTApi } from 'uploadthing/server';
+import { isAdminRequest } from '@/lib/adminAuth';
 
 function normalizeKeys(value: unknown) {
   if (!Array.isArray(value)) return [];
@@ -7,10 +8,9 @@ function normalizeKeys(value: unknown) {
 }
 
 export async function POST(request: NextRequest) {
-  const adminSecret = process.env.ADMIN_SECRET;
   const providedSecret = request.headers.get('x-admin-secret') || '';
 
-  if (!adminSecret || providedSecret !== adminSecret) {
+  if (!isAdminRequest(request, providedSecret)) {
     return NextResponse.json({ error: 'Unauthorized admin delete request.' }, { status: 401 });
   }
 
