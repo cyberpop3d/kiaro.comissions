@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "alias": [
+    "commissions.kiarostudio.com",
     "commissions.yontuk.com"
   ]
 }
