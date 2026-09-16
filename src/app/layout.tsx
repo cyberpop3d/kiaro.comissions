@@ -3,8 +3,8 @@ import { CommissionNotificationBridge } from '@/components/CommissionNotificatio
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Kiaro Studio Commissions',
-  description: 'Private commission and file communication portal for Kiaro Studio.'
+  title: 'Yontuk Commissions',
+  description: 'Private commission and file communication portal for Yontuk.'
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
