@@ -10,6 +10,12 @@ import { ArrowRight, KeyRound } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
+function yontukBrandCopy(value: string | undefined, fallback: string) {
+  return (value || fallback)
+    .replace(/Kiaro Studio/gi, 'Yontuk')
+    .replace(/\bKiaro\b/gi, 'Yontuk');
+}
+
 export default function HomePage() {
   const router = useRouter();
   const [config, setConfig] = useState<HomeInterfaceConfig>(defaultHomeConfig);
@@ -115,13 +121,13 @@ export default function HomePage() {
       <section className="mx-auto grid max-w-6xl gap-8 px-5 pt-10 lg:grid-cols-[1.05fr_.95fr] lg:pt-20">
         <div className="flex min-h-[56vh] flex-col justify-center space-y-7">
           <div className="inline-flex w-fit rounded-full border border-white/14 bg-white/[0.035] px-4 py-2 text-xs font-bold uppercase tracking-[0.22em] text-kiaro-muted">
-            {config.eyebrow || 'Yontuk Commissions'}
+            {yontukBrandCopy(config.eyebrow, 'Yontuk Commissions')}
           </div>
           <h1 className="max-w-4xl font-display text-5xl font-black leading-[0.95] tracking-tight md:text-7xl">
-            {config.title || 'Start a private commission workspace.'}
+            {yontukBrandCopy(config.title, 'Start a private commission workspace.')}
           </h1>
           <p className="max-w-2xl text-lg leading-8 text-kiaro-muted">
-            {config.subtitle || 'Discuss your project, share references, receive custom offers, and download final files in one clean workspace.'}
+            {yontukBrandCopy(config.subtitle, 'Discuss your project, share references, receive custom offers, and download final files in one clean workspace.')}
           </p>
           <div className="grid max-w-xl gap-3 text-sm text-kiaro-muted sm:grid-cols-3">
             <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-4">Private chat</div>
@@ -184,22 +190,22 @@ export default function HomePage() {
 
           <div className="mt-5 grid gap-3">
             <GoogleButton
-              label={checkingUser ? 'Checking Google session…' : config.googleButton || 'Sign in with Google'}
+              label={checkingUser ? 'Checking Google session…' : yontukBrandCopy(config.googleButton, 'Sign in with Google')}
               className="w-full"
               disabled={checkingUser || !termsAccepted}
               topic={topic}
               termsAcceptedAt={termsAccepted ? new Date().toISOString() : null}
             />
             <button type="button" disabled={!termsAccepted} onClick={() => setGuestOpen((value) => !value)} className="btn-ghost flex w-full items-center justify-center gap-2 px-6 py-4 text-sm font-black disabled:cursor-not-allowed disabled:opacity-45">
-              {config.guestButton || 'Continue without registration'} <ArrowRight size={16} />
+              {yontukBrandCopy(config.guestButton, 'Continue without registration')} <ArrowRight size={16} />
             </button>
           </div>
 
           {guestOpen ? (
             <div className="mt-5 rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-              <h3 className="font-display text-xl font-black">{config.guestTitle || 'Choose a display name'}</h3>
+              <h3 className="font-display text-xl font-black">{yontukBrandCopy(config.guestTitle, 'Choose a display name')}</h3>
               <p className="mt-2 text-sm leading-6 text-kiaro-muted">
-                {config.guestHelper || 'This name helps Yontuk identify your request inside the workspace.'}
+                {yontukBrandCopy(config.guestHelper, 'This name helps Yontuk identify your request inside the workspace.')}
               </p>
               <input
                 className="glass-input mt-4 w-full px-4 py-4"
@@ -222,7 +228,7 @@ export default function HomePage() {
             </button>
             {resumeOpen ? (
               <div className="mt-4 grid gap-3">
-                <p className="text-sm leading-6 text-kiaro-muted">{config.accessHelper || 'Resume an existing guest workspace with your saved key.'}</p>
+                <p className="text-sm leading-6 text-kiaro-muted">{yontukBrandCopy(config.accessHelper, 'Resume an existing guest workspace with your saved key.')}</p>
                 <input className="glass-input px-4 py-4 uppercase" placeholder="KIA-ABCD-1234" value={resumeKey} onChange={(e) => setResumeKey(e.target.value.toUpperCase())} />
                 <button disabled={busy || !resumeKey.trim()} onClick={continueWithKey} className="btn-ghost px-5 py-4 text-sm font-bold">
                   Resume guest workspace
