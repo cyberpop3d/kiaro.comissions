@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { CommissionNotificationBridge } from '@/components/CommissionNotificationBridge';
+import { YontukBrandBridge } from '@/components/YontukBrandBridge';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -22,6 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <CommissionNotificationBridge />
+        <YontukBrandBridge />
         {children}
       </body>
     </html>
