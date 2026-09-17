@@ -10,11 +10,28 @@ export const metadata: Metadata = {
   alternates: {
     canonical: '/'
   },
+  robots: {
+    index: false,
+    follow: false,
+    googleBot: {
+      index: false,
+      follow: false,
+      noimageindex: true
+    }
+  },
+  icons: {
+    icon: '/icon.svg'
+  },
   openGraph: {
     title: 'Yontuk Commissions',
     description: 'Private commission and file communication portal for Yontuk.',
     url: 'https://commissions.yontuk.com/',
     type: 'website'
+  },
+  twitter: {
+    card: 'summary',
+    title: 'Yontuk Commissions',
+    description: 'Private commission and file communication portal for Yontuk.'
   }
 };
 
