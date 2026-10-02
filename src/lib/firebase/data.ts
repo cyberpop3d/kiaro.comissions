@@ -647,7 +647,19 @@ function describeUploadThingError(error: unknown) {
   return message || 'Upload failed.';
 }
 
-async function uploadFileToUploadThing(file: File) {
+async function uploadFileToUploadThing(
+  file: File,
+  authContext: { conversationId: string; accessKey?: string | null; adminSecret?: string | null }
+) {
+  const user = await ensureAnonymousUser();
+  const idToken = await user.getIdToken();
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${idToken}`,
+    'x-conversation-id': authContext.conversationId
+  };
+  if (authContext.accessKey) headers['x-access-key'] = authContext.accessKey;
+  if (authContext.adminSecret) headers['x-admin-secret'] = authContext.adminSecret;
+
   const timeoutMs = isVideoFile(file) ? 300000 : 45000;
   const timeout = new Promise<never>((_, reject) => {
     window.setTimeout(() => {
@@ -657,7 +669,7 @@ async function uploadFileToUploadThing(file: File) {
 
   try {
     const result = await Promise.race([
-      uploadThingFiles('conversationAttachment', { files: [file] }),
+      uploadThingFiles('conversationAttachment', { files: [file], headers }),
       timeout
     ]);
 
@@ -693,12 +705,17 @@ export async function uploadConversationFile(
   sender: Message['sender'],
   file: File,
   overrideName?: string,
-  options?: { parentAttachmentId?: string | null; kind?: Attachment['kind']; messageBody?: string; projectId?: string | null }
+  options?: { parentAttachmentId?: string | null; kind?: Attachment['kind']; messageBody?: string; projectId?: string | null },
+  uploadAuth?: { accessKey?: string | null; adminSecret?: string | null }
 ) {
   await ensureAnonymousUser();
   const db = getFirebaseDb();
   const fileName = overrideName || file.name || 'upload.bin';
-  const uploaded = await uploadFileToUploadThing(file);
+  const uploaded = await uploadFileToUploadThing(file, {
+    conversationId,
+    accessKey: uploadAuth?.accessKey,
+    adminSecret: uploadAuth?.adminSecret
+  });
   const kind = kindFromFile(file, options?.kind);
   const attachment: Attachment = {
     id: crypto.randomUUID(),
@@ -1005,10 +1022,20 @@ export async function updatePaidProjectStatus(conversationId: string, projectId:
   });
 }
 
-export async function uploadPaidProjectFinalFile(conversationId: string, project: PaidProject, file: File, sender: Message['sender']) {
+export async function uploadPaidProjectFinalFile(
+  conversationId: string,
+  project: PaidProject,
+  file: File,
+  sender: Message['sender'],
+  uploadAuth?: { accessKey?: string | null; adminSecret?: string | null }
+) {
   await ensureAnonymousUser();
   const db = getFirebaseDb();
-  const uploaded = await uploadFileToUploadThing(file);
+  const uploaded = await uploadFileToUploadThing(file, {
+    conversationId,
+    accessKey: uploadAuth?.accessKey,
+    adminSecret: uploadAuth?.adminSecret
+  });
   const finalFile: ProjectFinalFile = {
     id: crypto.randomUUID(),
     storage_path: uploaded.key,
