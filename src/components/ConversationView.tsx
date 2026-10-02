@@ -990,10 +990,20 @@ export function ConversationView({
     setUploading(true);
     setError('');
     try {
-      await uploadConversationFile(conversationId, role, file, overrideName, {
-        ...options,
-        projectId: options?.parentAttachmentId ? options?.projectId ?? null : (currentProject?.id || null)
-      });
+      await uploadConversationFile(
+        conversationId,
+        role,
+        file,
+        overrideName,
+        {
+          ...options,
+          projectId: options?.parentAttachmentId ? options?.projectId ?? null : (currentProject?.id || null)
+        },
+        {
+          accessKey: role === 'customer' ? accessKey : null,
+          adminSecret: role === 'admin' ? adminSecret : null
+        }
+      );
       markScopeRead(currentProject?.id || GENERAL_SCOPE_ID);
       if (file.type.startsWith('image/')) setPanelTab('references');
       else setPanelTab('files');
@@ -1092,7 +1102,15 @@ export function ConversationView({
     setProjectWorkingId(finalUploadProject.id);
     setError('');
     try {
-      for (const file of Array.from(files)) await uploadPaidProjectFinalFile(conversationId, finalUploadProject, file, role);
+      for (const file of Array.from(files)) {
+        await uploadPaidProjectFinalFile(
+          conversationId,
+          finalUploadProject,
+          file,
+          role,
+          { accessKey: role === 'customer' ? accessKey : null, adminSecret: role === 'admin' ? adminSecret : null }
+        );
+      }
       setPanelTab('delivery');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Final file upload failed.');
